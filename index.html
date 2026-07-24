@@ -11,6 +11,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <style>
   :root{
     --bg:#F4F2ED;
@@ -263,11 +264,11 @@
     <div class="login-error" id="loginError">Usuário ou senha inválidos.</div>
     <div class="field">
       <label for="loginUser">Usuário</label>
-      <input type="text" id="loginUser" autocomplete="username" placeholder="Usuário">
+      <input type="text" id="loginUser" name="dms_user_field" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Usuário">
     </div>
     <div class="field">
       <label for="loginPass">Senha</label>
-      <input type="password" id="loginPass" autocomplete="current-password" placeholder="••••••••">
+      <input type="password" id="loginPass" name="dms_pass_field" autocomplete="new-password" placeholder="••••••••">
     </div>
     <button class="btn btn-primary" onclick="attemptLogin()">Entrar</button>
   </div>
@@ -493,7 +494,7 @@
             </div>
             <div class="field">
               <label>Senha</label>
-              <input type="text" id="newUserPass" required placeholder="senha inicial">
+              <input type="password" id="newUserPass" required placeholder="senha inicial" autocomplete="new-password">
             </div>
             <div class="field">
               <label>Setor</label>
@@ -654,9 +655,15 @@ const firebaseConfig = {
   appId: "1:278276492902:web:951285d339417a9a5e27a7"
 };
 let fbDb = null;
+let fbAuth = null;
+let fbSecondaryAuth = null;
+const AUTH_EMAIL_DOMAIN = '@controle-presenca.app'; // domínio fictício: login continua sendo feito por "usuário", não por e-mail real
 try{
   firebase.initializeApp(firebaseConfig);
   fbDb = firebase.firestore();
+  fbAuth = firebase.auth();
+  const secondaryApp = firebase.initializeApp(firebaseConfig, 'Secondary');
+  fbSecondaryAuth = secondaryApp.auth();
 }catch(e){
   console.error('Falha ao iniciar o Firebase — usando apenas armazenamento local do navegador.', e);
 }
@@ -697,22 +704,73 @@ function showToast(msg){
   t._h = setTimeout(()=>{ t.style.display='none'; }, 2600);
 }
 
-/* ======================= USUÁRIOS ======================= */
-const MASTER_USER = 'controle';
-const MASTER_PASS = '102030';
+/* ======================= USUÁRIOS (Firebase Authentication) ======================= */
+// A senha nunca é armazenada nem exibida pelo app: fica só nos servidores do Firebase.
+// O que guardamos no Firestore, em "usuarios_perfil/{uid}", é apenas o perfil de acesso
+// (nome de usuário, atividades vinculadas e se é master).
 
-async function loadUsers(){
-  const raw = await storageGet('users_v1', true);
-  usersCache = raw ? JSON.parse(raw) : [];
-  // migração: usuários antigos tinham "atividade" (string única) em vez de "atividades" (array)
-  usersCache.forEach(u=>{
-    if(!Array.isArray(u.atividades)){
-      u.atividades = u.atividade ? [u.atividade] : [];
-    }
-  });
+async function loadUsersPerfil(){
+  usersCache = [];
+  if(!fbDb) return usersCache;
+  try{
+    const snap = await fbDb.collection('usuarios_perfil').get();
+    snap.forEach(doc=>{
+      const d = doc.data();
+      if(d.isMaster) return; // o master não aparece na lista de usuários comuns
+      usersCache.push({ uid: doc.id, usuario: d.usuario, atividades: d.atividades || [] });
+    });
+  }catch(e){
+    console.error('Falha ao carregar usuários', e);
+  }
   return usersCache;
 }
-async function saveUsers(){ await storageSet('users_v1', JSON.stringify(usersCache), true); }
+
+/* ======================= LOGIN ======================= */
+async function attemptLogin(){
+  const uRaw = document.getElementById('loginUser').value.trim();
+  const p = document.getElementById('loginPass').value;
+  const errBox = document.getElementById('loginError');
+  errBox.style.display = 'none';
+
+  if(!uRaw || !p){
+    errBox.textContent = 'Preencha usuário e senha.';
+    errBox.style.display = 'block';
+    return;
+  }
+  if(!fbAuth || !fbDb){
+    errBox.textContent = 'Não foi possível conectar ao serviço de login. Verifique sua internet.';
+    errBox.style.display = 'block';
+    return;
+  }
+
+  const email = uRaw.toLowerCase() + AUTH_EMAIL_DOMAIN;
+  try{
+    const cred = await fbAuth.signInWithEmailAndPassword(email, p);
+    const uid = cred.user.uid;
+    const perfilDoc = await fbDb.collection('usuarios_perfil').doc(uid).get();
+    if(!perfilDoc.exists){
+      errBox.textContent = 'Usuário sem perfil cadastrado. Fale com o administrador.';
+      errBox.style.display = 'block';
+      await fbAuth.signOut();
+      return;
+    }
+    const perfil = perfilDoc.data();
+    session = { usuario: perfil.usuario, atividades: perfil.atividades || [], isMaster: !!perfil.isMaster, uid };
+    return enterApp();
+  }catch(e){
+    console.error('login falhou', e);
+    errBox.textContent = 'Usuário ou senha inválidos.';
+    errBox.style.display = 'block';
+  }
+}
+
+function logout(){
+  if(fbAuth) fbAuth.signOut().catch(()=>{});
+  session = null;
+  document.getElementById('app').style.display = 'none';
+  document.getElementById('loginScreen').style.display = 'flex';
+  limparCamposLogin();
+}
 
 async function loadExtraEmployees(){
   const raw = await storageGet('extra_employees_v1', true);
@@ -756,34 +814,6 @@ async function saveAtividades(){ await storageSet('atividades_v1', JSON.stringif
 
 function atividadeNomes(){ return atividadesCache.map(a => a.nome); }
 
-/* ======================= LOGIN ======================= */
-async function attemptLogin(){
-  const u = document.getElementById('loginUser').value.trim();
-  const p = document.getElementById('loginPass').value;
-  const errBox = document.getElementById('loginError');
-  errBox.style.display = 'none';
-
-  if(u === MASTER_USER && p === MASTER_PASS){
-    session = { usuario: u, atividades: [], isMaster: true };
-    return enterApp();
-  }
-  await loadUsers();
-  const found = usersCache.find(x => x.usuario === u && x.senha === p);
-  if(found){
-    session = { usuario: found.usuario, atividades: found.atividades || [], isMaster: false };
-    return enterApp();
-  }
-  errBox.style.display = 'block';
-}
-
-function logout(){
-  session = null;
-  document.getElementById('app').style.display = 'none';
-  document.getElementById('loginScreen').style.display = 'flex';
-  document.getElementById('loginUser').value = '';
-  document.getElementById('loginPass').value = '';
-}
-
 async function enterApp(){
   document.getElementById('loginScreen').style.display = 'none';
   document.getElementById('app').style.display = 'block';
@@ -795,7 +825,7 @@ async function enterApp(){
   await loadSetores();
   await loadAtividades();
   await loadExtraEmployees();
-  await loadUsers();
+  await loadUsersPerfil();
 
   document.getElementById('fDateFrom').value = todayStr();
   document.getElementById('fDateTo').value = todayStr();
@@ -2019,8 +2049,7 @@ function renderUserList(){
     (u.atividades||[]).map(a=>'<span class="tag">'+escapeHtml(a)+'</span>').join('')+
     '</div>'+
     '<div style="display:flex;gap:8px;align-items:center;">'+
-    '<span class="u-meta mono">senha: '+escapeHtml(u.senha)+'</span>'+
-    '<button class="btn btn-danger btn-sm" onclick="deleteUser('+idx+')">Excluir</button>'+
+    '<button class="btn btn-danger btn-sm" onclick="deleteUser('+idx+')">Remover acesso</button>'+
     '</div></div>'
   )).join('');
 }
@@ -2029,33 +2058,62 @@ async function createUser(ev){
   ev.preventDefault();
   if(!session.isMaster) return false;
   const usuario = document.getElementById('newUserName').value.trim();
-  const senha = document.getElementById('newUserPass').value.trim();
+  const senha = document.getElementById('newUserPass').value;
   const atividades = newUserSelectedAtividades.slice();
   if(!usuario || !senha) return false;
+  if(senha.length < 6){
+    showToast('A senha deve ter pelo menos 6 caracteres.');
+    return false;
+  }
   if(atividades.length === 0){
     showToast('Adicione ao menos uma atividade para o usuário.');
     return false;
   }
-  if(usuario === MASTER_USER || usersCache.some(u=>u.usuario===usuario)){
+  if(usuario.toLowerCase() === 'controle' || usersCache.some(u=>u.usuario.toLowerCase()===usuario.toLowerCase())){
     showToast('Já existe um usuário com esse nome.');
     return false;
   }
-  usersCache.push({ usuario, senha, atividades });
-  await saveUsers();
-  renderUserList();
-  document.getElementById('newUserName').value='';
-  document.getElementById('newUserPass').value='';
-  newUserSelectedAtividades = [];
-  renderNewUserSelectedList();
-  showToast('Usuário criado com sucesso.');
+  if(!fbSecondaryAuth || !fbDb){
+    showToast('Serviço de login indisponível no momento.');
+    return false;
+  }
+  const email = usuario.toLowerCase() + AUTH_EMAIL_DOMAIN;
+  try{
+    const cred = await fbSecondaryAuth.createUserWithEmailAndPassword(email, senha);
+    const uid = cred.user.uid;
+    await fbDb.collection('usuarios_perfil').doc(uid).set({ usuario, atividades, isMaster: false });
+    await fbSecondaryAuth.signOut();
+    await loadUsersPerfil();
+    renderUserList();
+    document.getElementById('newUserName').value='';
+    document.getElementById('newUserPass').value='';
+    newUserSelectedAtividades = [];
+    renderNewUserSelectedList();
+    showToast('Usuário criado com sucesso.');
+  }catch(e){
+    console.error('Falha ao criar usuário', e);
+    if(e.code === 'auth/email-already-in-use') showToast('Já existe um usuário com esse nome.');
+    else if(e.code === 'auth/weak-password') showToast('Senha muito fraca (mínimo 6 caracteres).');
+    else showToast('Erro ao criar usuário. Tente novamente.');
+  }
   return false;
 }
 
 async function deleteUser(idx){
   if(!session.isMaster) return;
-  usersCache.splice(idx,1);
-  await saveUsers();
-  renderUserList();
+  const u = usersCache[idx];
+  if(!u) return;
+  const ok = confirm('Remover o acesso de "'+u.usuario+'" ao sistema?\n\nObs.: isso remove o perfil e os dados dele no app. A conta de login em si só pode ser totalmente apagada pelo Firebase Console (Authentication > Users), se necessário.');
+  if(!ok) return;
+  try{
+    await fbDb.collection('usuarios_perfil').doc(u.uid).delete();
+    usersCache.splice(idx,1);
+    renderUserList();
+    showToast('Acesso removido.');
+  }catch(e){
+    console.error('Falha ao remover usuário', e);
+    showToast('Erro ao remover usuário.');
+  }
 }
 
 /* ======================= SETORES (CONFIG) ======================= */
@@ -2171,6 +2229,18 @@ document.addEventListener('keydown', function(e){
   if(e.key === 'Enter' && document.getElementById('loginScreen').style.display !== 'none'){
     attemptLogin();
   }
+});
+
+/* Garante que usuário/senha nunca fiquem pré-preenchidos por autofill do navegador */
+function limparCamposLogin(){
+  const u = document.getElementById('loginUser');
+  const p = document.getElementById('loginPass');
+  if(u) u.value = '';
+  if(p) p.value = '';
+}
+window.addEventListener('load', function(){
+  limparCamposLogin();
+  setTimeout(limparCamposLogin, 60); // segunda passada: alguns navegadores preenchem após o load
 });
 </script>
 </body>
