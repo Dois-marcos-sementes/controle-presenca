@@ -2115,7 +2115,7 @@ async function createUser(ev){
     showToast('Usuário criado com sucesso.');
   }catch(e){
     console.error('Falha ao criar usuário', e);
-    if(e.code === 'auth/email-already-in-use') showToast('Já existe um usuário com esse nome.');
+    if(e.code === 'auth/email-already-in-use') showToast('Esse nome já foi usado antes (mesmo removido do app, a conta de login ainda existe). Apague-a em Firebase Console > Authentication > Users, ou use outro nome.');
     else if(e.code === 'auth/weak-password') showToast('Senha muito fraca (mínimo 6 caracteres).');
     else showToast('Erro ao criar usuário. Tente novamente.');
   }
@@ -2126,7 +2126,7 @@ async function deleteUser(idx){
   if(!session.isMaster) return;
   const u = usersCache[idx];
   if(!u) return;
-  const ok = confirm('Remover o acesso de "'+u.usuario+'" ao sistema?\n\nObs.: isso remove o perfil e os dados dele no app. A conta de login em si só pode ser totalmente apagada pelo Firebase Console (Authentication > Users), se necessário.');
+  const ok = confirm('Remover o acesso de "'+u.usuario+'" ao sistema?\n\nObs.: isso remove o perfil e os dados dele no app, mas a conta de login em si continua existindo no Firebase até você apagá-la manualmente em Authentication > Users, procurando por:\n'+u.usuario.toLowerCase()+AUTH_EMAIL_DOMAIN+'\n\nSe não apagar lá, não será possível recriar um usuário com esse mesmo nome depois.');
   if(!ok) return;
   try{
     await fbDb.collection('usuarios_perfil').doc(u.uid).delete();
