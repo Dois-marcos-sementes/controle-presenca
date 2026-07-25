@@ -567,6 +567,63 @@
           </form>
         </div>
       </div>
+
+      <!-- ===== ENVIO AUTOMÁTICO DO DASHBOARD POR E-MAIL (100% gratuito) ===== -->
+      <div class="panel" style="margin-top:22px;padding:18px;">
+        <div class="panel-head" style="padding:0 0 12px;">
+          <h2>Envio automático do dashboard por e-mail</h2>
+        </div>
+        <div class="note-box" style="margin-bottom:16px;">
+          Envia por e-mail uma imagem do dashboard master (todos os setores/atividades do dia) nos horários definidos abaixo.
+          Solução 100% gratuita — sem WhatsApp e sem custo de infraestrutura — mas com uma condição importante:
+          <b>o envio só dispara enquanto este app estiver aberto, com o usuário master logado</b>, em algum computador/tablet
+          (ex.: um monitor na sala de controle). Isso é uma limitação de qualquer app que rode só no navegador, sem servidor.
+          O disparo em si usa um pequeno script gratuito do Google (Apps Script) — veja o guia de configuração em
+          <span class="mono">EMAIL_AUTOMATICO_LEIAME.md</span>, que acompanha os arquivos do sistema.
+        </div>
+
+        <div class="field" style="margin-bottom:14px;">
+          <label>Destinatários (e-mails)</label>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+            <input type="text" id="newEmailLabel" placeholder="Rótulo (ex: Diretoria)" style="flex:1;min-width:140px;">
+            <input type="email" id="newEmailAddress" placeholder="email@empresa.com" style="flex:2;min-width:200px;">
+            <button type="button" class="btn btn-ghost btn-sm" onclick="addEmailDestinatario()">+ Adicionar</button>
+          </div>
+          <div id="emailDestinatariosList" style="display:flex;flex-wrap:wrap;gap:6px;min-height:38px;border:1px solid var(--line);border-radius:6px;padding:9px 10px;background:#FCFBF8;"></div>
+        </div>
+
+        <div class="field" style="margin-bottom:14px;">
+          <label>Horários de envio (até 3 por dia)</label>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;">
+            <input type="time" id="emailHorario1">
+            <input type="time" id="emailHorario2">
+            <input type="time" id="emailHorario3">
+          </div>
+          <p style="font-size:11.5px;color:var(--ink-soft);margin-top:6px;">Deixe em branco os horários que não quiser usar.</p>
+        </div>
+
+        <div class="field" style="margin-bottom:14px;">
+          <label style="display:flex;align-items:center;gap:8px;font-weight:normal;">
+            <input type="checkbox" id="emailPorTurno" style="width:auto;">
+            Enviar também um arquivo separado por turno de atividade (além do consolidado geral)
+          </label>
+        </div>
+
+        <div class="field" style="margin-bottom:14px;">
+          <label>URL do Google Apps Script (Web App)</label>
+          <input type="text" id="emailAppsScriptUrl" placeholder="https://script.google.com/macros/s/XXXXX/exec">
+        </div>
+        <div class="field" style="margin-bottom:14px;">
+          <label>Token de segurança (definido por você no script)</label>
+          <input type="text" id="emailToken" placeholder="ex: uma senha só sua, qualquer texto">
+        </div>
+
+        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+          <button class="btn btn-primary btn-sm" onclick="saveEmailScheduleConfig()">Salvar configuração</button>
+          <button class="btn btn-ghost btn-sm" onclick="enviarRelatorioEmailAgora('teste')">Enviar teste agora</button>
+        </div>
+        <div id="emailScheduleLog" style="margin-top:10px;font-size:12px;color:var(--ink-soft);"></div>
+      </div>
     </section>
 
   </main>
@@ -784,6 +841,7 @@ async function attemptLogin(){
 function logout(){
   if(fbAuth) fbAuth.signOut().catch(()=>{});
   session = null;
+  if(emailSchedulerTimer){ clearInterval(emailSchedulerTimer); emailSchedulerTimer = null; }
   document.getElementById('app').style.display = 'none';
   document.getElementById('loginScreen').style.display = 'flex';
   limparCamposLogin();
@@ -831,6 +889,207 @@ async function saveAtividades(){ await storageSet('atividades_v1', JSON.stringif
 
 function atividadeNomes(){ return atividadesCache.map(a => a.nome); }
 
+/* ======================= ENVIO AUTOMÁTICO DO DASHBOARD POR E-MAIL ======================= */
+// Configuração salva no Firestore (compartilhada, editável só pelo master). O disparo em si
+// acontece no navegador (setInterval) enquanto o app estiver aberto com o master logado —
+// é a única forma 100% gratuita de agendar envios sem precisar de um servidor próprio.
+let emailScheduleConfig = { emails: [], horarios: ['', '', ''], porTurno: false, appsScriptUrl: '', token: '' };
+let emailSchedulerTimer = null;
+
+async function loadEmailScheduleConfig(){
+  const raw = await storageGet('email_schedule_config_v1', true);
+  if(raw){
+    try{ emailScheduleConfig = Object.assign({ emails: [], horarios: ['','',''], porTurno:false, appsScriptUrl:'', token:'' }, JSON.parse(raw)); }
+    catch(e){ console.error('Config de e-mail inválida', e); }
+  }
+}
+async function persistEmailScheduleConfig(){
+  await storageSet('email_schedule_config_v1', JSON.stringify(emailScheduleConfig), true);
+}
+
+function renderEmailDestinatariosList(){
+  const box = document.getElementById('emailDestinatariosList');
+  if(!box) return;
+  if(emailScheduleConfig.emails.length === 0){
+    box.innerHTML = '<span style="color:var(--ink-soft);font-size:12px;">Nenhum destinatário cadastrado.</span>';
+    return;
+  }
+  box.innerHTML = emailScheduleConfig.emails.map((d, idx)=>(
+    '<span class="tag" style="display:inline-flex;align-items:center;gap:6px;background:var(--grain);padding:5px 9px;border-radius:14px;">'+
+    escapeHtml((d.label ? d.label + ' — ' : '') + d.email) +
+    ' <button type="button" onclick="removeEmailDestinatario('+idx+')" style="border:none;background:none;cursor:pointer;color:var(--ink-soft);font-weight:bold;">✕</button></span>'
+  )).join('');
+}
+
+function addEmailDestinatario(){
+  const labelEl = document.getElementById('newEmailLabel');
+  const emailEl = document.getElementById('newEmailAddress');
+  const label = labelEl.value.trim();
+  const email = emailEl.value.trim();
+  if(!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){
+    showToast('Informe um e-mail válido.');
+    return;
+  }
+  if(emailScheduleConfig.emails.some(d => d.email.toLowerCase() === email.toLowerCase())){
+    showToast('Esse e-mail já está na lista.');
+    return;
+  }
+  emailScheduleConfig.emails.push({ label, email });
+  labelEl.value = ''; emailEl.value = '';
+  renderEmailDestinatariosList();
+}
+
+function removeEmailDestinatario(idx){
+  emailScheduleConfig.emails.splice(idx, 1);
+  renderEmailDestinatariosList();
+}
+
+function fillEmailScheduleFormFromConfig(){
+  document.getElementById('emailHorario1').value = emailScheduleConfig.horarios[0] || '';
+  document.getElementById('emailHorario2').value = emailScheduleConfig.horarios[1] || '';
+  document.getElementById('emailHorario3').value = emailScheduleConfig.horarios[2] || '';
+  document.getElementById('emailPorTurno').checked = !!emailScheduleConfig.porTurno;
+  document.getElementById('emailAppsScriptUrl').value = emailScheduleConfig.appsScriptUrl || '';
+  document.getElementById('emailToken').value = emailScheduleConfig.token || '';
+  renderEmailDestinatariosList();
+}
+
+async function saveEmailScheduleConfig(){
+  if(!session || !session.isMaster) return;
+  emailScheduleConfig.horarios = [
+    document.getElementById('emailHorario1').value || '',
+    document.getElementById('emailHorario2').value || '',
+    document.getElementById('emailHorario3').value || ''
+  ];
+  emailScheduleConfig.porTurno = document.getElementById('emailPorTurno').checked;
+  emailScheduleConfig.appsScriptUrl = document.getElementById('emailAppsScriptUrl').value.trim();
+  emailScheduleConfig.token = document.getElementById('emailToken').value.trim();
+  await persistEmailScheduleConfig();
+  showToast('Configuração de e-mail salva.');
+  startEmailScheduler(); // reinicia o verificador de horário com a config nova
+}
+
+// Captura uma imagem (JPEG) do dashboard master atualmente renderizado na tela.
+async function capturarImagemDashboard(){
+  const el = document.getElementById('view-dashboard');
+  const canvas = await html2canvas(el, { scale: 1.4, backgroundColor: '#FFFFFF', useCORS: true });
+  return canvas.toDataURL('image/jpeg', 0.85).split(',')[1]; // só o base64, sem o prefixo data:
+}
+
+// Gera e envia o(s) relatório(s) do dashboard master por e-mail via Apps Script.
+// "gatilho" é só um texto para identificar a origem no log ('teste' ou o horário agendado, ex.: '08:00').
+async function enviarRelatorioEmailAgora(gatilho){
+  const logEl = document.getElementById('emailScheduleLog');
+  if(!session || !session.isMaster){
+    showToast('Apenas o master pode enviar o relatório por e-mail.');
+    return;
+  }
+  if(emailScheduleConfig.emails.length === 0){
+    if(logEl) logEl.textContent = 'Cadastre ao menos um destinatário antes de enviar.';
+    showToast('Cadastre ao menos um e-mail destinatário.');
+    return;
+  }
+  if(!emailScheduleConfig.appsScriptUrl){
+    if(logEl) logEl.textContent = 'Informe a URL do Google Apps Script (veja o guia EMAIL_AUTOMATICO_LEIAME.md).';
+    showToast('Informe a URL do Apps Script antes de enviar.');
+    return;
+  }
+  if(typeof html2canvas === 'undefined'){
+    showToast('Não foi possível carregar os recursos de captura de imagem. Verifique sua internet.');
+    return;
+  }
+
+  if(logEl) logEl.textContent = 'Gerando imagem(ns) do dashboard...';
+
+  // guarda os filtros atuais para restaurar depois
+  const fAtividadeEl = document.getElementById('fAtividade');
+  const fTurnoEl = document.getElementById('fTurno');
+  const prevAtividade = fAtividadeEl.value;
+  const prevTurno = fTurnoEl.value;
+
+  try{
+    const images = [];
+
+    // imagem consolidada (todas as atividades, todos os turnos)
+    fAtividadeEl.value = '__ALL__';
+    fTurnoEl.value = '__ALL__';
+    renderDashboard();
+    await new Promise(r => setTimeout(r, 400)); // aguarda os gráficos redesenharem
+    images.push({
+      filename: 'dashboard_geral_' + todayStr() + '.jpg',
+      base64: await capturarImagemDashboard(),
+      mimeType: 'image/jpeg'
+    });
+
+    // imagens separadas por turno (opcional)
+    if(emailScheduleConfig.porTurno){
+      for(const turno of ['1','2']){
+        fTurnoEl.value = turno;
+        renderDashboard();
+        await new Promise(r => setTimeout(r, 400));
+        images.push({
+          filename: 'dashboard_turno' + turno + '_' + todayStr() + '.jpg',
+          base64: await capturarImagemDashboard(),
+          mimeType: 'image/jpeg'
+        });
+      }
+    }
+
+    if(logEl) logEl.textContent = 'Enviando por e-mail...';
+
+    const payload = {
+      token: emailScheduleConfig.token || '',
+      emails: emailScheduleConfig.emails.map(d => d.email),
+      subject: 'Dashboard de presença — Dois Marcos Sementes — ' + todayStr(),
+      htmlBody: '<p>Segue em anexo o dashboard de presença de todos os setores/atividades, atualizado em ' +
+        new Date().toLocaleString('pt-BR') + '.</p>',
+      images
+    };
+
+    await fetch(emailScheduleConfig.appsScriptUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // evita preflight CORS no Apps Script
+      body: JSON.stringify(payload)
+    });
+
+    if(logEl) logEl.textContent = 'E-mail enviado (' + gatilho + ') às ' + new Date().toLocaleTimeString('pt-BR') + ' para ' + emailScheduleConfig.emails.length + ' destinatário(s).';
+    showToast('Relatório enviado por e-mail.');
+  }catch(err){
+    console.error('Falha ao enviar relatório por e-mail', err);
+    if(logEl) logEl.textContent = 'Falha ao enviar o e-mail. Verifique a URL do Apps Script e sua internet.';
+    showToast('Falha ao enviar o relatório por e-mail.');
+  }finally{
+    fAtividadeEl.value = prevAtividade;
+    fTurnoEl.value = prevTurno;
+    renderDashboard();
+  }
+}
+
+// Verificador de horário: roda a cada 20s enquanto o master estiver com o app aberto e logado.
+// Compara HH:MM atual (hora local do navegador) com os até 3 horários configurados e evita
+// reenviar duas vezes no mesmo dia/horário usando uma marca salva no localStorage do dispositivo.
+function startEmailScheduler(){
+  if(emailSchedulerTimer) clearInterval(emailSchedulerTimer);
+  emailSchedulerTimer = setInterval(async () => {
+    if(!session || !session.isMaster) return;
+    const horarios = (emailScheduleConfig.horarios || []).filter(h => h);
+    if(horarios.length === 0) return;
+
+    const now = new Date();
+    const hhmm = String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
+    if(!horarios.includes(hhmm)) return;
+
+    const today = todayStr();
+    const dedupeKey = 'cp_email_last_sent_' + hhmm;
+    let already = null;
+    try{ already = localStorage.getItem(dedupeKey); }catch(e){}
+    if(already === today) return;
+
+    try{ localStorage.setItem(dedupeKey, today); }catch(e){}
+    await enviarRelatorioEmailAgora(hhmm);
+  }, 20000);
+}
+
 function podeGerenciarPessoal(){
   return !!(session && (session.isMaster || session.perfil === 'lider'));
 }
@@ -875,6 +1134,9 @@ async function enterApp(){
     renderSetorList();
     renderAtividadeList();
     populateNewAtividadeSetorSelect();
+    await loadEmailScheduleConfig();
+    fillEmailScheduleFormFromConfig();
+    startEmailScheduler();
   }
 }
 
