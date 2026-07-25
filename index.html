@@ -432,22 +432,20 @@
       </div>
     </section>
 
-    <!-- ===== CADASTRO DE PESSOAL (master) ===== -->
+    <!-- ===== CADASTRO DE PESSOAL (master e líderes, escopado por perfil) ===== -->
     <section class="view-section" id="view-pessoal">
-      <div class="note-box">
+      <div class="note-box" id="pessoalNoteBox">
         Acesso restrito a master e líderes. A importação é aceita exclusivamente no formato Microsoft Excel (.xlsx).
         Você pode selecionar <b>uma ou várias planilhas de uma vez</b>, cada uma podendo ter <b>várias abas</b>
         (por atividade, ex.: TSI, Milho, UBS, etc.) — o sistema varre todas as abas de todos os arquivos, reconhece
         automaticamente as que contêm colaboradores e ignora abas de resumo/painel.
-        <b>Cada envio substitui totalmente o cadastro anterior</b> pelo conteúdo dos arquivos enviados dessa vez —
-        não é cumulativo, então envie sempre o conjunto completo e mais atual de planilhas. O cruzamento final em
-        produção usa o CPF/credencial como chave, vindo da API da catraca.
+        O cruzamento final em produção usa o CPF/credencial como chave, vindo da API da catraca.
       </div>
       <div class="panel" style="padding:18px;">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:10px;">
-          <h2 style="font-family:var(--serif);font-size:15px;margin:0;">Importar planilha(s) (.xlsx)</h2>
+          <h2 style="font-family:var(--serif);font-size:15px;margin:0;" id="pessoalPanelTitle">Importar planilha(s) (.xlsx)</h2>
           <div style="display:flex;gap:8px;flex-wrap:wrap;">
-            <button class="btn btn-danger btn-sm" onclick="confirmLimparDadosImportados()">Limpar todos os dados</button>
+            <button class="btn btn-danger btn-sm" id="btnLimparDados" onclick="confirmLimparDadosImportados()">Limpar todos os dados</button>
           </div>
         </div>
         <p style="font-size:12px;color:var(--ink-soft);margin:0 0 12px;">
@@ -459,9 +457,21 @@
         </p>
         <label class="upload-drop">
           <input type="file" accept=".xlsx" multiple style="display:none;" onchange="handleXlsxUpload(event)">
-          Clique para selecionar um ou mais arquivos .xlsx (substitui o cadastro atual)
+          <span id="uploadDropLabel">Clique para selecionar um ou mais arquivos .xlsx (substitui o cadastro atual)</span>
         </label>
         <div id="importLog" style="margin-top:10px;font-size:12px;color:var(--ink-soft);"></div>
+      </div>
+      <div class="panel" style="padding:18px;" id="masterClearScopeBox">
+        <div class="panel-head">
+          <h2>Excluir importação por setor/atividade (somente master)</h2>
+        </div>
+        <p style="font-size:12px;color:var(--ink-soft);margin:0 0 12px;">
+          Apaga apenas os colaboradores da atividade selecionada, mantendo os dados das demais atividades/líderes intactos.
+        </p>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+          <select id="clearScopeAtividadeSel" style="min-width:220px;"></select>
+          <button class="btn btn-danger btn-sm" onclick="confirmLimparDadosPorAtividade()">Excluir dados desta atividade</button>
+        </div>
       </div>
       <div class="panel">
         <div class="panel-head">
@@ -825,6 +835,15 @@ function podeGerenciarPessoal(){
   return !!(session && (session.isMaster || session.perfil === 'lider'));
 }
 
+// Retorna a lista de atividades às quais o usuário logado está restrito para
+// importação/exclusão de dados de pessoal, ou null quando o acesso é irrestrito
+// (master). Líderes só podem importar/limpar dados das atividades vinculadas ao
+// próprio perfil — cada líder de setor mexe apenas na sua própria estrutura.
+function pessoalScopeAtividades(){
+  if(!session || session.isMaster) return null;
+  return session.atividades || [];
+}
+
 async function enterApp(){
   document.getElementById('loginScreen').style.display = 'none';
   document.getElementById('app').style.display = 'block';
@@ -845,6 +864,7 @@ async function enterApp(){
 
   populateAtividadeFilter();
   populateNewUserAtividade();
+  configurePessoalScopeUI();
   switchTab('dashboard');
   renderDashboard();
   if(podeGerenciarPessoal()){
@@ -856,6 +876,56 @@ async function enterApp(){
     renderAtividadeList();
     populateNewAtividadeSetorSelect();
   }
+}
+
+// Ajusta os textos e a visibilidade dos controles do painel "Cadastro de Pessoal"
+// de acordo com o perfil logado: líderes só enxergam/mexem no escopo das próprias
+// atividades; a exclusão seletiva por setor/atividade fica restrita ao master.
+function configurePessoalScopeUI(){
+  if(!podeGerenciarPessoal()) return;
+  const scope = pessoalScopeAtividades(); // null = master (irrestrito)
+  const noteBox = document.getElementById('pessoalNoteBox');
+  const title = document.getElementById('pessoalPanelTitle');
+  const btnLimpar = document.getElementById('btnLimparDados');
+  const dropLabel = document.getElementById('uploadDropLabel');
+  const masterBox = document.getElementById('masterClearScopeBox');
+
+  if(scope === null){
+    // master: acesso irrestrito, inclusive à exclusão seletiva por atividade/setor
+    if(noteBox) noteBox.innerHTML = 'Acesso master: irrestrito a todas as atividades e setores. A importação é aceita ' +
+      'exclusivamente no formato Microsoft Excel (.xlsx). Você pode selecionar <b>uma ou várias planilhas de uma vez</b>, ' +
+      'cada uma podendo ter <b>várias abas</b> (por atividade, ex.: TSI, Milho, UBS, etc.). <b>Um envio pelo master substitui ' +
+      'totalmente o cadastro geral</b> pelo conteúdo enviado dessa vez — não é cumulativo. Para apagar apenas uma ' +
+      'atividade/setor específico sem afetar os demais líderes, use a exclusão seletiva abaixo.';
+    if(title) title.textContent = 'Importar planilha(s) (.xlsx) — todas as atividades';
+    if(btnLimpar) btnLimpar.textContent = 'Limpar todos os dados';
+    if(dropLabel) dropLabel.textContent = 'Clique para selecionar um ou mais arquivos .xlsx (substitui o cadastro geral)';
+    if(masterBox){
+      masterBox.style.display = '';
+      populateClearScopeAtividadeSel();
+    }
+  } else {
+    const rotulo = scope.length ? scope.join(', ') : '—';
+    if(noteBox) noteBox.innerHTML = 'Acesso de líder: a importação e a exclusão de dados valem apenas para a(s) sua(s) ' +
+      'atividade(s)/setor: <b>' + escapeHtml(rotulo) + '</b>. Os dados de outros líderes e atividades não são afetados. ' +
+      'A importação é aceita exclusivamente no formato Microsoft Excel (.xlsx); linhas de outras atividades presentes na ' +
+      'planilha enviada são ignoradas automaticamente.';
+    if(title) title.textContent = 'Importar planilha(s) (.xlsx) — ' + rotulo;
+    if(btnLimpar) btnLimpar.textContent = 'Limpar dados da minha atividade';
+    if(dropLabel) dropLabel.textContent = 'Clique para selecionar um ou mais arquivos .xlsx (substitui apenas seus dados: ' + rotulo + ')';
+    if(masterBox) masterBox.style.display = 'none';
+  }
+}
+
+function populateClearScopeAtividadeSel(){
+  const sel = document.getElementById('clearScopeAtividadeSel');
+  if(!sel) return;
+  const prev = sel.value;
+  sel.innerHTML = '';
+  atividadeNomes().forEach(a=>{
+    const o = document.createElement('option'); o.value = a; o.textContent = a; sel.appendChild(o);
+  });
+  if(atividadeNomes().includes(prev)) sel.value = prev;
 }
 
 /* ======================= NAV ======================= */
@@ -1686,8 +1756,11 @@ function openEmployeeDetail(nome, atividade){
 
 /* ======================= CADASTRO DE PESSOAL (master) ======================= */
 function renderPessoal(){
-  const list = allEmployees().slice().sort((a,b)=> a.nome.localeCompare(b.nome));
-  document.getElementById('pessoalMeta').textContent = list.length + ' colaborador(es)';
+  const scope = pessoalScopeAtividades(); // null = master (vê tudo)
+  const base = allEmployees();
+  const list = (scope ? base.filter(e => scope.includes(e.atividade)) : base)
+    .slice().sort((a,b)=> a.nome.localeCompare(b.nome));
+  document.getElementById('pessoalMeta').textContent = list.length + ' colaborador(es)' + (scope ? ' (sua atividade)' : '');
   const tbody = document.getElementById('pessoalTableBody');
   if(list.length===0){
     tbody.innerHTML = '<tr><td colspan="7"><div class="empty-state">Nenhum colaborador cadastrado.</div></td></tr>';
@@ -1888,14 +1961,49 @@ function handleXlsxUpload(ev){
       return;
     }
 
-    // Cada envio substitui integralmente o cadastro anterior pelo conteúdo do(s) arquivo(s) mais recente(s).
+    const scope = pessoalScopeAtividades(); // null = master (irrestrito)
+
+    if(scope !== null){
+      // LÍDER: a importação só pode afetar a(s) própria(s) atividade(s)/setor. Linhas de
+      // outras atividades presentes na planilha são descartadas, e os dados de outros
+      // líderes/atividades permanecem intactos (merge, não substituição total).
+      if(scope.length === 0){
+        logEl.textContent = 'Seu perfil de líder não está vinculado a nenhuma atividade. Fale com o administrador (master).';
+        showToast('Nenhuma atividade vinculada ao seu perfil.');
+        return;
+      }
+      const dentroDoEscopo = newEmployees.filter(e => scope.includes(e.atividade));
+      const foraDoEscopo = newEmployees.length - dentroDoEscopo.length;
+
+      if(dentroDoEscopo.length === 0){
+        logEl.textContent = 'Nenhum colaborador da(s) sua(s) atividade(s) (' + scope.join(', ') + ') foi encontrado nas planilhas enviadas.';
+        showToast('Nenhum colaborador da sua atividade foi reconhecido nas planilhas.');
+        return;
+      }
+
+      // Parte da base atual (já tocada ou ainda na base fixa) preservando tudo que não é do escopo do líder.
+      const baseAtual = employeesDataTouched ? employeesExtra.slice() : BASE_EMPLOYEES.slice();
+      const preservado = baseAtual.filter(e => !scope.includes(e.atividade));
+      employeesExtra = preservado.concat(dentroDoEscopo);
+      await saveExtraEmployees(true);
+      renderPessoal();
+      renderDashboard();
+      logEl.innerHTML = 'Cadastro da(s) atividade(s) <b>' + escapeHtml(scope.join(', ')) + '</b> atualizado. Importado(s): ' +
+        sheetSummary.map(escapeHtml).join(' · ') +
+        (foraDoEscopo > 0 ? '<br>' + foraDoEscopo + ' colaborador(es) de outra(s) atividade(s) foram ignorados (fora do seu escopo).' : '') +
+        (skippedSheets.length ? '<br>Abas ignoradas (sem colaboradores reconhecidos): ' + skippedSheets.map(escapeHtml).join(', ') : '');
+      showToast(dentroDoEscopo.length + ' colaborador(es) atualizados na sua atividade (demais atividades não foram afetadas).');
+      return;
+    }
+
+    // MASTER: cada envio substitui integralmente o cadastro geral pelo conteúdo do(s) arquivo(s) mais recente(s).
     employeesExtra = newEmployees;
     await saveExtraEmployees();
     renderPessoal();
     renderDashboard();
-    logEl.innerHTML = 'Cadastro substituído pela planilha mais recente. Importado(s): ' + sheetSummary.map(escapeHtml).join(' · ') +
+    logEl.innerHTML = 'Cadastro geral substituído pela planilha mais recente. Importado(s): ' + sheetSummary.map(escapeHtml).join(' · ') +
       (skippedSheets.length ? '<br>Abas ignoradas (sem colaboradores reconhecidos): ' + skippedSheets.map(escapeHtml).join(', ') : '');
-    showToast(totalParsed + ' colaborador(es) carregados (substituindo o cadastro anterior).');
+    showToast(totalParsed + ' colaborador(es) carregados (substituindo o cadastro geral).');
   })();
 
   ev.target.value = '';
@@ -2040,7 +2148,30 @@ async function exportDashboardPDF(){
 /* ======================= LIMPAR DADOS IMPORTADOS ======================= */
 async function confirmLimparDadosImportados(){
   if(!podeGerenciarPessoal()) return;
-  const ok = confirm('Tem certeza que deseja apagar TODOS os colaboradores importados?\n\nEssa ação não pode ser desfeita.');
+  const scope = pessoalScopeAtividades(); // null = master (irrestrito)
+
+  if(scope !== null){
+    // LÍDER: limpa apenas a(s) própria(s) atividade(s)/setor, preservando os dados
+    // de todos os outros líderes/atividades. Excluir por outra atividade/setor é
+    // permitido somente ao usuário master.
+    if(scope.length === 0){
+      showToast('Seu perfil de líder não está vinculado a nenhuma atividade.');
+      return;
+    }
+    const ok = confirm('Tem certeza que deseja apagar os colaboradores importados da(s) sua(s) atividade(s) (' + scope.join(', ') + ')?\n\nOs dados das demais atividades/líderes não serão afetados. Essa ação não pode ser desfeita.');
+    if(!ok) return;
+    const baseAtual = employeesDataTouched ? employeesExtra.slice() : BASE_EMPLOYEES.slice();
+    employeesExtra = baseAtual.filter(e => !scope.includes(e.atividade));
+    await saveExtraEmployees(true);
+    renderPessoal();
+    renderDashboard();
+    document.getElementById('importLog').textContent = 'Dados da(s) atividade(s) ' + scope.join(', ') + ' apagados. As demais atividades não foram afetadas.';
+    showToast('Dados da sua atividade apagados com sucesso.');
+    return;
+  }
+
+  // MASTER: apaga o cadastro geral por completo.
+  const ok = confirm('Tem certeza que deseja apagar TODOS os colaboradores importados (de TODAS as atividades/líderes)?\n\nEssa ação não pode ser desfeita.');
   if(!ok) return;
   employeesExtra = [];
   await saveExtraEmployees(true);
@@ -2048,6 +2179,27 @@ async function confirmLimparDadosImportados(){
   renderDashboard();
   document.getElementById('importLog').textContent = 'Todos os dados importados foram apagados. Nenhum colaborador cadastrado no momento.';
   showToast('Dados apagados com sucesso.');
+}
+
+// Exclusão seletiva por atividade/setor — disponível somente para o usuário master.
+// Permite remover os dados de uma única atividade sem afetar as demais.
+async function confirmLimparDadosPorAtividade(){
+  if(!session || !session.isMaster) return;
+  const sel = document.getElementById('clearScopeAtividadeSel');
+  const atividade = sel ? sel.value : '';
+  if(!atividade){
+    showToast('Selecione uma atividade para excluir.');
+    return;
+  }
+  const ok = confirm('Tem certeza que deseja apagar os colaboradores importados da atividade "' + atividade + '"?\n\nOs dados das demais atividades/líderes não serão afetados. Essa ação não pode ser desfeita.');
+  if(!ok) return;
+  const baseAtual = employeesDataTouched ? employeesExtra.slice() : BASE_EMPLOYEES.slice();
+  employeesExtra = baseAtual.filter(e => e.atividade !== atividade);
+  await saveExtraEmployees(true);
+  renderPessoal();
+  renderDashboard();
+  document.getElementById('importLog').textContent = 'Dados da atividade "' + atividade + '" apagados. As demais atividades não foram afetadas.';
+  showToast('Dados da atividade "' + atividade + '" apagados com sucesso.');
 }
 
 
