@@ -335,6 +335,14 @@
           <div class="kpi-label">Em atraso</div>
           <div class="kpi-value" id="kpiAtraso">—</div>
           <div class="kpi-sub">ocorrências no período</div>
+          <div style="display:flex;gap:10px;margin-top:6px;font-size:11px;flex-wrap:wrap;">
+            <span onclick="event.stopPropagation();openDrilldown('atrasoPresente')" style="cursor:pointer;text-decoration:underline;color:var(--green-deep);">
+              <b id="kpiAtrasoPresente">—</b> já entraram
+            </span>
+            <span onclick="event.stopPropagation();openDrilldown('atrasoPendente')" style="cursor:pointer;text-decoration:underline;color:var(--red);">
+              <b id="kpiAtrasoPendente">—</b> sem entrada ainda
+            </span>
+          </div>
           <div class="kpi-click-hint">clique para ver colaboradores →</div>
         </div>
         <div class="kpi-card k-falta" onclick="openDrilldown('falta')">
@@ -590,6 +598,16 @@
             <button type="button" class="btn btn-ghost btn-sm" onclick="addEmailDestinatario()">+ Adicionar</button>
           </div>
           <div id="emailDestinatariosList" style="display:flex;flex-wrap:wrap;gap:6px;min-height:38px;border:1px solid var(--line);border-radius:6px;padding:9px 10px;background:#FCFBF8;"></div>
+        </div>
+
+        <div class="field" style="margin-bottom:14px;">
+          <label>Setores/atividades incluídos no relatório</label>
+          <div style="display:flex;gap:8px;margin-bottom:8px;">
+            <button type="button" class="btn btn-ghost btn-sm" onclick="marcarTodasAtividadesEmail(true)">Selecionar todas</button>
+            <button type="button" class="btn btn-ghost btn-sm" onclick="marcarTodasAtividadesEmail(false)">Limpar seleção</button>
+          </div>
+          <div id="emailAtividadesChecklist" style="max-height:220px;overflow-y:auto;border:1px solid var(--line);border-radius:6px;padding:10px 12px;background:#FCFBF8;"></div>
+          <p style="font-size:11.5px;color:var(--ink-soft);margin-top:6px;">Só as atividades marcadas entram na imagem e na tabela do relatório. Se criar uma atividade nova depois, lembre de marcá-la aqui também.</p>
         </div>
 
         <div class="field" style="margin-bottom:14px;">
@@ -893,13 +911,13 @@ function atividadeNomes(){ return atividadesCache.map(a => a.nome); }
 // Configuração salva no Firestore (compartilhada, editável só pelo master). O disparo em si
 // acontece no navegador (setInterval) enquanto o app estiver aberto com o master logado —
 // é a única forma 100% gratuita de agendar envios sem precisar de um servidor próprio.
-let emailScheduleConfig = { emails: [], horarios: ['', '', ''], porTurno: false, appsScriptUrl: '', token: '' };
+let emailScheduleConfig = { emails: [], atividadesSelecionadas: [], horarios: ['', '', ''], porTurno: false, appsScriptUrl: '', token: '' };
 let emailSchedulerTimer = null;
 
 async function loadEmailScheduleConfig(){
   const raw = await storageGet('email_schedule_config_v1', true);
   if(raw){
-    try{ emailScheduleConfig = Object.assign({ emails: [], horarios: ['','',''], porTurno:false, appsScriptUrl:'', token:'' }, JSON.parse(raw)); }
+    try{ emailScheduleConfig = Object.assign({ emails: [], atividadesSelecionadas: [], horarios: ['','',''], porTurno:false, appsScriptUrl:'', token:'' }, JSON.parse(raw)); }
     catch(e){ console.error('Config de e-mail inválida', e); }
   }
 }
@@ -944,6 +962,40 @@ function removeEmailDestinatario(idx){
   renderEmailDestinatariosList();
 }
 
+// Checklist de atividades/setores que devem entrar no relatório por e-mail. Agrupa por setor
+// para facilitar achar/marcar em massa. Se a seleção salva vier vazia (primeira vez usando a
+// função), começa com tudo marcado — equivalente ao comportamento anterior de "todas".
+function renderEmailAtividadesChecklist(){
+  const box = document.getElementById('emailAtividadesChecklist');
+  if(!box) return;
+  if(atividadesCache.length === 0){
+    box.innerHTML = '<span style="color:var(--ink-soft);font-size:12px;">Nenhuma atividade cadastrada em Setores/Atividades.</span>';
+    return;
+  }
+  const selecionadas = emailScheduleConfig.atividadesSelecionadas;
+  const marcarTudoPorPadrao = !selecionadas || selecionadas.length === 0;
+
+  const porSetor = {};
+  atividadesCache.forEach(a => { (porSetor[a.setor] = porSetor[a.setor] || []).push(a.nome); });
+
+  box.innerHTML = Object.keys(porSetor).sort().map(setor => (
+    '<div style="margin-bottom:8px;">' +
+      '<div style="font-size:11px;font-weight:700;color:var(--ink-soft);text-transform:uppercase;margin-bottom:4px;">'+escapeHtml(setor)+'</div>' +
+      porSetor[setor].map(nome => {
+        const checked = marcarTudoPorPadrao || selecionadas.includes(nome);
+        return '<label style="display:flex;align-items:center;gap:6px;font-weight:normal;font-size:12.5px;padding:2px 0;">' +
+          '<input type="checkbox" class="email-ativ-check" value="'+escapeAttr(nome)+'" style="width:auto;" '+(checked?'checked':'')+'> '+
+          escapeHtml(nome) +
+        '</label>';
+      }).join('') +
+    '</div>'
+  )).join('');
+}
+
+function marcarTodasAtividadesEmail(marcar){
+  document.querySelectorAll('.email-ativ-check').forEach(chk => { chk.checked = marcar; });
+}
+
 function fillEmailScheduleFormFromConfig(){
   document.getElementById('emailHorario1').value = emailScheduleConfig.horarios[0] || '';
   document.getElementById('emailHorario2').value = emailScheduleConfig.horarios[1] || '';
@@ -952,6 +1004,7 @@ function fillEmailScheduleFormFromConfig(){
   document.getElementById('emailAppsScriptUrl').value = emailScheduleConfig.appsScriptUrl || '';
   document.getElementById('emailToken').value = emailScheduleConfig.token || '';
   renderEmailDestinatariosList();
+  renderEmailAtividadesChecklist();
 }
 
 async function saveEmailScheduleConfig(){
@@ -964,6 +1017,18 @@ async function saveEmailScheduleConfig(){
   emailScheduleConfig.porTurno = document.getElementById('emailPorTurno').checked;
   emailScheduleConfig.appsScriptUrl = document.getElementById('emailAppsScriptUrl').value.trim();
   emailScheduleConfig.token = document.getElementById('emailToken').value.trim();
+
+  const marcadas = Array.from(document.querySelectorAll('.email-ativ-check:checked')).map(chk => chk.value);
+  const totalAtividades = document.querySelectorAll('.email-ativ-check').length;
+  // Se estiverem todas marcadas, salvamos como lista vazia (== "todas", inclusive futuras
+  // atividades novas). Só salvamos uma lista explícita quando é de fato um subconjunto.
+  emailScheduleConfig.atividadesSelecionadas = (marcadas.length === totalAtividades) ? [] : marcadas;
+
+  if(totalAtividades > 0 && marcadas.length === 0){
+    showToast('Marque ao menos uma atividade para o relatório.');
+    return;
+  }
+
   await persistEmailScheduleConfig();
   showToast('Configuração de e-mail salva.');
   startEmailScheduler(); // reinicia o verificador de horário com a config nova
@@ -987,7 +1052,7 @@ function buildResumoSetorAtividadeRows(agg, pool){
 
   return Object.keys(contagem)
     .map(ativ => {
-      const d = agg.byAtividade[ativ] || { atraso:0, falta:0, saida:0, folga:0, presente:0 };
+      const d = agg.byAtividade[ativ] || { atraso:0, atrasoPresente:0, atrasoPendente:0, falta:0, saida:0, folga:0, presente:0 };
       return {
         setor: setorDeAtividade(ativ, pool),
         atividade: ativ,
@@ -995,6 +1060,7 @@ function buildResumoSetorAtividadeRows(agg, pool){
         presentes: d.presente || 0,
         faltas: d.falta || 0,
         atrasos: d.atraso || 0,
+        atrasosSemEntrada: d.atrasoPendente || 0,
         saidas: d.saida || 0,
         folgas: d.folga || 0
       };
@@ -1027,6 +1093,7 @@ function buildEmailReportContainer(agg, rows, escopoLabel, dataLabel){
     '<tr style="background:'+(idx%2===0?'#FFFFFF':'#FAF8F4')+';">' +
       td(r.setor) + td(r.atividade) + tdC(r.colaboradores) +
       tdC(r.presentes, '#2e7d4f') + tdC(r.faltas, '#b3401f') + tdC(r.atrasos, '#b8860b') +
+      tdC(r.atrasosSemEntrada, r.atrasosSemEntrada>0?'#b3401f':null) +
       tdC(r.saidas) + tdC(r.folgas) +
     '</tr>'
   )).join('');
@@ -1043,12 +1110,13 @@ function buildEmailReportContainer(agg, rows, escopoLabel, dataLabel){
     '</div>' +
     '<div style="display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap;">' +
       kpi('Presenças', t.presente, '#2e7d4f') + kpi('Faltas', t.falta, '#b3401f') +
-      kpi('Atrasos', t.atraso, '#b8860b') + kpi('Saídas ant.', t.saida, '#5b5548') + kpi('Folgas', t.folga, '#5b5548') +
+      kpi('Atrasos', t.atraso, '#b8860b') + kpi('Sem entrada', t.atrasoPendente||0, '#b3401f') +
+      kpi('Saídas ant.', t.saida, '#5b5548') + kpi('Folgas', t.folga, '#5b5548') +
     '</div>' +
     '<table style="width:100%;border-collapse:collapse;">' +
       '<thead><tr style="background:#2b2620;">' +
         th('Setor') + th('Atividade') + thCenter('Colab.') + thCenter('Present.') +
-        thCenter('Faltas') + thCenter('Atrasos') + thCenter('Saídas') + thCenter('Folgas') +
+        thCenter('Faltas') + thCenter('Atrasos') + thCenter('Sem entrada') + thCenter('Saídas') + thCenter('Folgas') +
       '</tr></thead><tbody>'+rowsHtml+'</tbody></table>' +
     '<div style="margin-top:16px;font-size:10px;color:#9a9385;text-align:right;">Gerado automaticamente em '+new Date().toLocaleString('pt-BR')+'</div>';
 
@@ -1067,12 +1135,12 @@ function gerarTabelaHtmlEmail(rows){
   const linhas = rows.map((r, idx) => (
     '<tr style="background:'+(idx%2===0?'#ffffff':'#f7f5f0')+';">' +
       td(r.setor) + td(r.atividade) + tdC(r.colaboradores) + tdC(r.presentes) +
-      tdC(r.faltas) + tdC(r.atrasos) + tdC(r.saidas) + tdC(r.folgas) +
+      tdC(r.faltas) + tdC(r.atrasos) + tdC(r.atrasosSemEntrada) + tdC(r.saidas) + tdC(r.folgas) +
     '</tr>'
   )).join('');
   return '<table style="border-collapse:collapse;width:100%;font-family:Arial,Helvetica,sans-serif;margin-top:6px;">' +
     '<thead><tr style="background:#2b2620;color:#fff;">' +
-      th('Setor') + th('Atividade') + thC('Colab.') + thC('Presentes') + thC('Faltas') + thC('Atrasos') + thC('Saídas') + thC('Folgas') +
+      th('Setor') + th('Atividade') + thC('Colab.') + thC('Presentes') + thC('Faltas') + thC('Atrasos') + thC('Sem entrada') + thC('Saídas') + thC('Folgas') +
     '</tr></thead><tbody>'+linhas+'</tbody></table>';
 }
 
@@ -1102,6 +1170,12 @@ function gerarTextoExplicativoEmail(agg, pool, escopoLabel){
   } else {
     html += '<p style="font-family:Arial,Helvetica,sans-serif;font-size:13.5px;color:#2b2620;line-height:1.5;">' +
       'Nenhuma atividade apresentou ocorrências relevantes de falta ou atraso hoje. 👍</p>';
+  }
+
+  if((t.atrasoPendente||0) > 0){
+    html += '<p style="font-family:Arial,Helvetica,sans-serif;font-size:13.5px;color:#b3401f;line-height:1.5;">' +
+      '⚠️ <b>' + t.atrasoPendente + ' colaborador(es)</b> estão atrasados e ainda não bateram entrada até o momento ' +
+      '(diferente dos outros ' + (t.atrasoPresente||0) + ' que já chegaram atrasados) — vale a pena verificar se vão comparecer.</p>';
   }
   return html;
 }
@@ -1144,14 +1218,32 @@ async function enviarRelatorioEmailAgora(gatilho){
   const dataLabel = new Date().toLocaleDateString('pt-BR');
   const tempContainers = [];
 
+  // Se houver uma seleção explícita de atividades salva em Configurações, o relatório considera
+  // só essas — senão (lista vazia = "todas"), entra a empresa inteira, como antes.
+  const filtroAtividades = (emailScheduleConfig.atividadesSelecionadas && emailScheduleConfig.atividadesSelecionadas.length)
+    ? emailScheduleConfig.atividadesSelecionadas
+    : null;
+  const escopoGeralLabel = filtroAtividades
+    ? ('Atividades selecionadas: ' + filtroAtividades.join(', '))
+    : 'Todos os setores/atividades';
+
   try{
     const images = [];
 
-    // Relatório geral (todas as atividades, todos os turnos) — sempre gerado.
-    const poolGeral = allEmployees();
+    // Relatório geral (atividades selecionadas em Configurações, todos os turnos) — sempre gerado.
+    const poolGeral = filtroAtividades
+      ? allEmployees().filter(e => filtroAtividades.includes(e.atividade))
+      : allEmployees();
+
+    if(poolGeral.length === 0){
+      if(logEl) logEl.textContent = 'Nenhum colaborador nas atividades selecionadas para o relatório. Ajuste a seleção em Configurações.';
+      showToast('Nenhum colaborador nas atividades selecionadas.');
+      return;
+    }
+
     const aggGeral = computeAggregate(poolGeral, hoje, hoje);
     const rowsGeral = buildResumoSetorAtividadeRows(aggGeral, poolGeral);
-    const containerGeral = buildEmailReportContainer(aggGeral, rowsGeral, 'Todos os setores/atividades', dataLabel);
+    const containerGeral = buildEmailReportContainer(aggGeral, rowsGeral, escopoGeralLabel, dataLabel);
     tempContainers.push(containerGeral);
     await new Promise(r => setTimeout(r, 60));
     images.push({
@@ -1184,7 +1276,7 @@ async function enviarRelatorioEmailAgora(gatilho){
       '<div style="font-family:Arial,Helvetica,sans-serif;">' +
         '<h2 style="font-family:Georgia,\'Times New Roman\',serif;color:#2b2620;margin:0 0 4px;">Dois Marcos Sementes — Relatório de presença</h2>' +
         '<p style="font-size:12px;color:#6b6558;margin:0 0 16px;">' + dataLabel + ' · gerado às ' + new Date().toLocaleTimeString('pt-BR') + '</p>' +
-        gerarTextoExplicativoEmail(aggGeral, poolGeral, 'todos os setores/atividades') +
+        gerarTextoExplicativoEmail(aggGeral, poolGeral, escopoGeralLabel) +
         '<p style="font-family:Arial,Helvetica,sans-serif;font-size:13.5px;color:#2b2620;margin-top:18px;"><b>Resumo por setor e atividade:</b></p>' +
         gerarTabelaHtmlEmail(rowsGeral) +
         '<p style="font-family:Arial,Helvetica,sans-serif;font-size:11.5px;color:#8a8272;margin-top:18px;">Uma imagem com este mesmo resumo (' +
@@ -1468,6 +1560,27 @@ function nextDateStr(dateStr){
 
 const GLOBAL_TOLERANCE_MIN = 7; // desconsidera atrasos/saídas antecipadas dentro dessa margem (entrada, saída e refeição)
 
+// Minutos desde a meia-noite no horário atual do dispositivo (usado só para detectar,
+// no dia de hoje, quem já está atrasado mas ainda nem bateu entrada).
+function currentMinutesOfDay(){
+  const d = new Date();
+  return d.getHours()*60 + d.getMinutes();
+}
+// Quantos minutos se passaram desde "startMin" até "nowMin", tratando a virada da meia-noite
+// (ex.: turno começa às 19:30 (1170min) e agora são 05:00 (300min) → 300+1440-1170 = 570min).
+function minutosDesdeInicioTurno(startMin, nowMin){
+  let diff = nowMin - startMin;
+  if(diff < 0) diff += 1440;
+  return diff;
+}
+// Diz se, neste exato momento, o turno (start–end) ainda está dentro da janela esperada de
+// trabalho — considera turnos que atravessam a meia-noite (ex.: 19:30–06:30).
+function turnoAindaEmAndamento(startMin, endMin, nowMin, crossesMidnight){
+  if(!crossesMidnight) return nowMin >= startMin && nowMin <= endMin;
+  const duracaoTurno = (endMin - startMin + 1440) % 1440;
+  return minutosDesdeInicioTurno(startMin, nowMin) <= duracaoTurno;
+}
+
 function computeStatus(emp, dateStr, hasDataForDate){
   const escala = (emp.escalaTipo || '').toUpperCase();
   const is5x1 = escala.indexOf('5X1') !== -1;
@@ -1522,6 +1635,27 @@ function computeStatus(emp, dateStr, hasDataForDate){
 
   if(!entrada && !saida){
     if(!emp.credencial) return { code:'sem-dados', label:'Sem dados de ponto' };
+
+    // Só para o dia de HOJE (dia em andamento): se o turno já deveria ter começado (passou da
+    // tolerância) e ainda não terminou, e o colaborador ainda não bateu entrada, isso é um atraso
+    // "em aberto" — ele pode chegar a qualquer momento — e não uma falta já confirmada. Para dias
+    // já encerrados (passados), a ausência de batida continua sendo tratada como falta mesmo.
+    if(dateStr === todayStr() && jornada){
+      const nowMin = currentMinutesOfDay();
+      const startMin = toMinutes(jornada.start);
+      const endMin = toMinutes(jornada.end);
+      const crossesMid = toMinutes(jornada.end) <= toMinutes(jornada.start);
+      if(turnoAindaEmAndamento(startMin, endMin, nowMin, crossesMid)){
+        const decorrido = minutosDesdeInicioTurno(startMin, nowMin);
+        if(decorrido > GLOBAL_TOLERANCE_MIN){
+          return {
+            code:'atraso', semEntrada:true, atrasoMin: decorrido,
+            label: 'Atrasado · ainda não bateu entrada (' + decorrido + ' min desde o início previsto ' + jornada.start + ')'
+          };
+        }
+      }
+    }
+
     return { code:'falta', label:'Falta' };
   }
 
@@ -1540,7 +1674,7 @@ function computeStatus(emp, dateStr, hasDataForDate){
 
   if(atrasoMin > 0){
     return {
-      code:'atraso',
+      code:'atraso', semEntrada:false,
       label: 'Atraso · ' + atrasoMin + ' min (previsto ' + jornada.start + ', chegou ' + entradaHora + ')',
       entrada, saida, atrasoMin
     };
@@ -1556,7 +1690,7 @@ function computeStatus(emp, dateStr, hasDataForDate){
 }
 
 const BADGE_CLASS = { presente:'b-presente', atraso:'b-atraso', falta:'b-falta', saida:'b-saida', folga:'b-folga', 'sem-dados':'b-sem' };
-const KPI_TITLES = { atraso:'Colaboradores em atraso', falta:'Faltas registradas', saida:'Saídas antecipadas', folga:'Em folga (DSR)', presente:'Presenças', all:'Todos os colaboradores' };
+const KPI_TITLES = { atraso:'Colaboradores em atraso', atrasoPresente:'Atrasados — já entraram', atrasoPendente:'Atrasados — ainda não bateram entrada', falta:'Faltas registradas', saida:'Saídas antecipadas', folga:'Em folga (DSR)', presente:'Presenças', all:'Todos os colaboradores' };
 
 /* ======================= AGREGAÇÃO POR PERÍODO ======================= */
 function computeAggregate(pool, dateFrom, dateTo){
@@ -1566,13 +1700,13 @@ function computeAggregate(pool, dateFrom, dateTo){
   const perEmployee = new Map();
   pool.forEach(emp=>{
     perEmployee.set(emp.nome + '|' + emp.atividade, {
-      emp, atraso:0, falta:0, saida:0, folga:0, presente:0, semDados:0,
+      emp, atraso:0, atrasoPresente:0, atrasoPendente:0, falta:0, saida:0, folga:0, presente:0, semDados:0,
       atrasoMinTotal:0, saidaMinTotal:0,
       days: []
     });
   });
 
-  const totals = { atraso:0, falta:0, saida:0, folga:0, presente:0, atrasoMinTotal:0 };
+  const totals = { atraso:0, atrasoPresente:0, atrasoPendente:0, falta:0, saida:0, folga:0, presente:0, atrasoMinTotal:0 };
   const byAtividade = {};
   const byTurnoKey = {};
 
@@ -1584,21 +1718,33 @@ function computeAggregate(pool, dateFrom, dateTo){
       const st = computeStatus(emp, dateStr, hasData);
       const codeKey = st.code === 'sem-dados' ? 'semDados' : st.code;
       rec[codeKey] = (rec[codeKey]||0) + 1;
-      if(st.code === 'atraso') rec.atrasoMinTotal += st.atrasoMin;
+      if(st.code === 'atraso'){
+        rec.atrasoMinTotal += st.atrasoMin;
+        if(st.semEntrada) rec.atrasoPendente++; else rec.atrasoPresente++;
+      }
       if(st.code === 'saida') rec.saidaMinTotal += st.saidaAntecipMin;
       rec.days.push({ date: dateStr, status: st });
 
       if(st.code === 'atraso' || st.code === 'falta' || st.code === 'saida' || st.code === 'folga' || st.code === 'presente'){
         totals[st.code]++;
-        if(!byAtividade[emp.atividade]) byAtividade[emp.atividade] = { atraso:0, falta:0, saida:0, folga:0, presente:0, atrasoMinTotal:0 };
+        if(!byAtividade[emp.atividade]) byAtividade[emp.atividade] = { atraso:0, atrasoPresente:0, atrasoPendente:0, falta:0, saida:0, folga:0, presente:0, atrasoMinTotal:0 };
         byAtividade[emp.atividade][st.code]++;
         const turnoKey = emp.turno ? String(emp.turno) : 'N/D';
-        if(!byTurnoKey[turnoKey]) byTurnoKey[turnoKey] = { atraso:0, falta:0, saida:0, folga:0, presente:0, atrasoMinTotal:0 };
+        if(!byTurnoKey[turnoKey]) byTurnoKey[turnoKey] = { atraso:0, atrasoPresente:0, atrasoPendente:0, falta:0, saida:0, folga:0, presente:0, atrasoMinTotal:0 };
         byTurnoKey[turnoKey][st.code]++;
         if(st.code === 'atraso'){
           byAtividade[emp.atividade].atrasoMinTotal += st.atrasoMin;
           byTurnoKey[turnoKey].atrasoMinTotal += st.atrasoMin;
           totals.atrasoMinTotal += st.atrasoMin;
+          if(st.semEntrada){
+            totals.atrasoPendente++;
+            byAtividade[emp.atividade].atrasoPendente++;
+            byTurnoKey[turnoKey].atrasoPendente++;
+          } else {
+            totals.atrasoPresente++;
+            byAtividade[emp.atividade].atrasoPresente++;
+            byTurnoKey[turnoKey].atrasoPresente++;
+          }
         }
       }
     });
@@ -1658,6 +1804,8 @@ function renderDashboard(){
   }
 
   document.getElementById('kpiAtraso').textContent = agg.totals.atraso;
+  document.getElementById('kpiAtrasoPresente').textContent = agg.totals.atrasoPresente;
+  document.getElementById('kpiAtrasoPendente').textContent = agg.totals.atrasoPendente;
   document.getElementById('kpiFalta').textContent = agg.totals.falta;
   document.getElementById('kpiSaida').textContent = agg.totals.saida;
   document.getElementById('kpiFolga').textContent = agg.totals.folga;
@@ -1984,16 +2132,18 @@ function openDrilldown(kind){
   openModal(KPI_TITLES[kind] || 'Detalhes');
   const body = document.getElementById('modalBody');
 
-  if(kind === 'atraso'){
+  if(kind === 'atraso' || kind === 'atrasoPresente' || kind === 'atrasoPendente'){
     // Cada atraso tem um horário de chegada específico, então aqui listamos as ocorrências
     // individualmente (não agregadas por colaborador) para mostrar o tempo de atraso e a
-    // hora exata da batida de cada uma.
+    // hora exata da batida de cada uma. Quando o kind é 'atrasoPresente'/'atrasoPendente',
+    // filtramos só quem já bateu entrada / ainda não bateu, respectivamente.
     const occurrences = [];
     lastAggregate.perEmployee.forEach(rec=>{
       rec.days.forEach(d=>{
-        if(d.status.code === 'atraso'){
-          occurrences.push({ emp: rec.emp, date: d.date, atrasoMin: d.status.atrasoMin, entrada: d.status.entrada });
-        }
+        if(d.status.code !== 'atraso') return;
+        if(kind === 'atrasoPresente' && d.status.semEntrada) return;
+        if(kind === 'atrasoPendente' && !d.status.semEntrada) return;
+        occurrences.push({ emp: rec.emp, date: d.date, atrasoMin: d.status.atrasoMin, entrada: d.status.entrada, semEntrada: !!d.status.semEntrada });
       });
     });
     occurrences.sort((a,b)=> b.date.localeCompare(a.date) || a.emp.nome.localeCompare(b.emp.nome));
@@ -2003,11 +2153,12 @@ function openDrilldown(kind){
       const ft = (filterText||'').toLowerCase();
       const filtered = ft ? occurrences.filter(o=>o.emp.nome.toLowerCase().includes(ft)) : occurrences;
       if(filtered.length === 0) return '<div class="empty-state">Nenhuma ocorrência de atraso encontrada.</div>';
-      return '<table><thead><tr><th>Colaborador</th><th>Atividade</th><th>Data</th><th>Tempo de atraso</th><th>Hora da batida</th></tr></thead><tbody>'+
+      return '<table><thead><tr><th>Colaborador</th><th>Atividade</th><th>Data</th><th>Situação</th><th>Tempo de atraso</th><th>Hora da batida</th></tr></thead><tbody>'+
         filtered.map(o=>(
           "<tr style=\"cursor:pointer;\" onclick=\"openEmployeeDetail('" + escapeAttr(o.emp.nome) + "','" + escapeAttr(o.emp.atividade) + "')\">"+
           '<td>'+escapeHtml(o.emp.nome)+'</td><td>'+escapeHtml(o.emp.atividade)+'</td>'+
           '<td class="mono">'+o.date.split('-').reverse().join('/')+'</td>'+
+          '<td>'+(o.semEntrada ? '<span style="color:var(--red);">Ainda não entrou</span>' : '<span style="color:var(--green-deep);">Já entrou</span>')+'</td>'+
           '<td class="mono">'+o.atrasoMin+' min</td>'+
           '<td class="mono">'+(o.entrada||'—')+'</td>'+
           '</tr>'
