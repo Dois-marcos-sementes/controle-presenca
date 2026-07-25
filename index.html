@@ -969,14 +969,153 @@ async function saveEmailScheduleConfig(){
   startEmailScheduler(); // reinicia o verificador de horário com a config nova
 }
 
-// Captura uma imagem (JPEG) do dashboard master atualmente renderizado na tela.
-async function capturarImagemDashboard(){
-  const el = document.getElementById('view-dashboard');
-  const canvas = await html2canvas(el, { scale: 1.4, backgroundColor: '#FFFFFF', useCORS: true });
-  return canvas.toDataURL('image/jpeg', 0.85).split(',')[1]; // só o base64, sem o prefixo data:
+// Descobre o setor de uma atividade a partir do cadastro de Setores/Atividades (Config).
+// Quando a atividade não está cadastrada lá (ex.: veio direto da planilha), cai no setor
+// gravado no próprio colaborador (quando existir) ou em "Geral" como último recurso.
+function setorDeAtividade(nomeAtividade, poolFallback){
+  const found = atividadesCache.find(a => a.nome === nomeAtividade);
+  if(found) return found.setor;
+  const emp = (poolFallback||[]).find(e => e.atividade === nomeAtividade && e.setor);
+  return (emp && emp.setor) ? emp.setor : 'Geral';
 }
 
-// Gera e envia o(s) relatório(s) do dashboard master por e-mail via Apps Script.
+// Monta as linhas do resumo por Setor + Atividade (colaboradores, presentes, faltas,
+// atrasos, saídas antecipadas e folgas), ordenadas por setor e depois por atividade.
+function buildResumoSetorAtividadeRows(agg, pool){
+  const contagem = {};
+  pool.forEach(e => { contagem[e.atividade] = (contagem[e.atividade]||0) + 1; });
+
+  return Object.keys(contagem)
+    .map(ativ => {
+      const d = agg.byAtividade[ativ] || { atraso:0, falta:0, saida:0, folga:0, presente:0 };
+      return {
+        setor: setorDeAtividade(ativ, pool),
+        atividade: ativ,
+        colaboradores: contagem[ativ],
+        presentes: d.presente || 0,
+        faltas: d.falta || 0,
+        atrasos: d.atraso || 0,
+        saidas: d.saida || 0,
+        folgas: d.folga || 0
+      };
+    })
+    .sort((a,b) => a.setor.localeCompare(b.setor) || a.atividade.localeCompare(b.atividade));
+}
+
+// Gera, em um <div> fora da tela, um relatório compacto e já estilizado para o e-mail —
+// bem mais enxuto do que fotografar o dashboard inteiro do app: cabeçalho, 5 números-chave
+// e a tabela por setor/atividade, tudo pensado para caber legível numa imagem só.
+function buildEmailReportContainer(agg, rows, escopoLabel, dataLabel){
+  const t = agg.totals;
+  const container = document.createElement('div');
+  container.id = 'emailReportTemp';
+  container.style.cssText = 'position:fixed;left:-10000px;top:0;width:760px;background:#FFFFFF;' +
+    "font-family:Georgia,'Times New Roman',serif;color:#2b2620;padding:30px 32px;box-sizing:border-box;";
+
+  const kpi = (label, value, color) =>
+    '<div style="flex:1;min-width:110px;background:#FAF8F4;border:1px solid #E4DFD3;border-radius:10px;padding:12px 8px;text-align:center;">' +
+      '<div style="font-size:10px;letter-spacing:.03em;text-transform:uppercase;color:#8a8272;margin-bottom:6px;">'+label+'</div>' +
+      '<div style="font-size:22px;font-weight:700;color:'+color+';">'+value+'</div>' +
+    '</div>';
+
+  const th = (label) => '<th style="padding:8px;font-size:10.5px;color:#FFFFFF;text-align:left;">'+label+'</th>';
+  const thCenter = (label) => '<th style="padding:8px;font-size:10.5px;color:#FFFFFF;text-align:center;">'+label+'</th>';
+  const td = (val) => '<td style="padding:7px 8px;font-size:11.5px;border-bottom:1px solid #EDE8DC;">'+escapeHtml(String(val))+'</td>';
+  const tdC = (val, color) => '<td style="padding:7px 8px;font-size:11.5px;border-bottom:1px solid #EDE8DC;text-align:center;'+(color?'color:'+color+';font-weight:600;':'')+'">'+val+'</td>';
+
+  const rowsHtml = rows.map((r, idx) => (
+    '<tr style="background:'+(idx%2===0?'#FFFFFF':'#FAF8F4')+';">' +
+      td(r.setor) + td(r.atividade) + tdC(r.colaboradores) +
+      tdC(r.presentes, '#2e7d4f') + tdC(r.faltas, '#b3401f') + tdC(r.atrasos, '#b8860b') +
+      tdC(r.saidas) + tdC(r.folgas) +
+    '</tr>'
+  )).join('');
+
+  container.innerHTML =
+    '<div style="display:flex;justify-content:space-between;align-items:flex-end;border-bottom:2px solid #2b2620;padding-bottom:12px;margin-bottom:18px;">' +
+      '<div>' +
+        '<div style="font-size:18px;font-weight:700;">Dois Marcos Sementes</div>' +
+        '<div style="font-size:12.5px;color:#6b6558;margin-top:2px;">Relatório de presença — visão master</div>' +
+      '</div>' +
+      '<div style="text-align:right;font-size:11px;color:#6b6558;">' +
+        '<div>'+escapeHtml(escopoLabel)+'</div><div>'+escapeHtml(dataLabel)+'</div>' +
+      '</div>' +
+    '</div>' +
+    '<div style="display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap;">' +
+      kpi('Presenças', t.presente, '#2e7d4f') + kpi('Faltas', t.falta, '#b3401f') +
+      kpi('Atrasos', t.atraso, '#b8860b') + kpi('Saídas ant.', t.saida, '#5b5548') + kpi('Folgas', t.folga, '#5b5548') +
+    '</div>' +
+    '<table style="width:100%;border-collapse:collapse;">' +
+      '<thead><tr style="background:#2b2620;">' +
+        th('Setor') + th('Atividade') + thCenter('Colab.') + thCenter('Present.') +
+        thCenter('Faltas') + thCenter('Atrasos') + thCenter('Saídas') + thCenter('Folgas') +
+      '</tr></thead><tbody>'+rowsHtml+'</tbody></table>' +
+    '<div style="margin-top:16px;font-size:10px;color:#9a9385;text-align:right;">Gerado automaticamente em '+new Date().toLocaleString('pt-BR')+'</div>';
+
+  document.body.appendChild(container);
+  return container;
+}
+
+// A mesma tabela de resumo, só que como HTML "de e-mail" (estilo inline, compatível com
+// clientes de e-mail) para entrar direto no corpo da mensagem — assim os números aparecem
+// mesmo em clientes que bloqueiam imagens por padrão.
+function gerarTabelaHtmlEmail(rows){
+  const th = (label) => '<th style="padding:7px 8px;font-size:12px;text-align:left;">'+label+'</th>';
+  const thC = (label) => '<th style="padding:7px 8px;font-size:12px;text-align:center;">'+label+'</th>';
+  const td = (val) => '<td style="padding:6px 8px;border:1px solid #ddd;font-size:12px;">'+escapeHtml(String(val))+'</td>';
+  const tdC = (val) => '<td style="padding:6px 8px;border:1px solid #ddd;font-size:12px;text-align:center;">'+val+'</td>';
+  const linhas = rows.map((r, idx) => (
+    '<tr style="background:'+(idx%2===0?'#ffffff':'#f7f5f0')+';">' +
+      td(r.setor) + td(r.atividade) + tdC(r.colaboradores) + tdC(r.presentes) +
+      tdC(r.faltas) + tdC(r.atrasos) + tdC(r.saidas) + tdC(r.folgas) +
+    '</tr>'
+  )).join('');
+  return '<table style="border-collapse:collapse;width:100%;font-family:Arial,Helvetica,sans-serif;margin-top:6px;">' +
+    '<thead><tr style="background:#2b2620;color:#fff;">' +
+      th('Setor') + th('Atividade') + thC('Colab.') + thC('Presentes') + thC('Faltas') + thC('Atrasos') + thC('Saídas') + thC('Folgas') +
+    '</tr></thead><tbody>'+linhas+'</tbody></table>';
+}
+
+// Texto explicativo automático sobre a situação do dia, para o corpo do e-mail — destaca a
+// atividade que mais precisa de atenção (mais atrasos+faltas) ou avisa quando está tudo ok.
+function gerarTextoExplicativoEmail(agg, pool, escopoLabel){
+  const t = agg.totals;
+  let pior = null;
+  Object.keys(agg.byAtividade).forEach(ativ => {
+    const d = agg.byAtividade[ativ];
+    const problemas = (d.atraso||0) + (d.falta||0);
+    if(problemas > 0 && (!pior || problemas > pior.problemas)){
+      pior = { ativ, problemas, atraso: d.atraso||0, falta: d.falta||0 };
+    }
+  });
+
+  let html = '<p style="font-family:Arial,Helvetica,sans-serif;font-size:13.5px;color:#2b2620;line-height:1.5;">' +
+    'No dia de hoje, entre os <b>' + pool.length + ' colaborador(es)</b> cadastrados em ' + escapeHtml(escopoLabel).toLowerCase() +
+    ', foram registradas <b>' + t.presente + '</b> presença(s) dentro do horário, <b>' + t.falta + '</b> falta(s), <b>' +
+    t.atraso + '</b> atraso(s) (totalizando ' + formatHorasMin(t.atrasoMinTotal) + ' de atraso acumulado), <b>' + t.saida +
+    '</b> saída(s) antecipada(s) e <b>' + t.folga + '</b> colaborador(es) em folga (DSR).</p>';
+
+  if(pior){
+    html += '<p style="font-family:Arial,Helvetica,sans-serif;font-size:13.5px;color:#2b2620;line-height:1.5;">' +
+      'A atividade que mais precisa de atenção hoje é <b>' + escapeHtml(pior.ativ) + '</b>, com ' + pior.atraso +
+      ' atraso(s) e ' + pior.falta + ' falta(s) registrados.</p>';
+  } else {
+    html += '<p style="font-family:Arial,Helvetica,sans-serif;font-size:13.5px;color:#2b2620;line-height:1.5;">' +
+      'Nenhuma atividade apresentou ocorrências relevantes de falta ou atraso hoje. 👍</p>';
+  }
+  return html;
+}
+
+// Captura um elemento (fora da tela ou não) como JPEG em base64, pronto para anexar ao e-mail.
+async function capturarElementoComoJpeg(el){
+  const canvas = await html2canvas(el, { scale: 2, backgroundColor: '#FFFFFF', useCORS: true });
+  return canvas.toDataURL('image/jpeg', 0.9).split(',')[1]; // só o base64, sem o prefixo data:
+}
+
+// Gera e envia o relatório de presença por e-mail via Apps Script: uma imagem compacta com
+// tabela por setor/atividade (e opcionalmente uma por turno), mais um texto explicativo sobre
+// a situação do dia direto no corpo da mensagem. Sempre usa os dados do dia atual (hoje),
+// independente do que estiver filtrado na tela do dashboard no momento.
 // "gatilho" é só um texto para identificar a origem no log ('teste' ou o horário agendado, ex.: '08:00').
 async function enviarRelatorioEmailAgora(gatilho){
   const logEl = document.getElementById('emailScheduleLog');
@@ -999,46 +1138,41 @@ async function enviarRelatorioEmailAgora(gatilho){
     return;
   }
 
-  if(logEl) logEl.textContent = 'Gerando imagem(ns) do dashboard...';
+  if(logEl) logEl.textContent = 'Montando o relatório...';
 
-  // guarda os filtros e a aba atual para restaurar tudo depois
-  const fAtividadeEl = document.getElementById('fAtividade');
-  const fTurnoEl = document.getElementById('fTurno');
-  const prevAtividade = fAtividadeEl.value;
-  const prevTurno = fTurnoEl.value;
-  const abaAtivaAntes = document.querySelector('.view-section.active');
-  const prevTab = abaAtivaAntes ? abaAtivaAntes.id.replace('view-', '') : 'dashboard';
+  const hoje = todayStr();
+  const dataLabel = new Date().toLocaleDateString('pt-BR');
+  const tempContainers = [];
 
   try{
     const images = [];
 
-    // A captura só funciona com a aba Dashboard visível (elementos com display:none não
-    // podem ser fotografados pelo html2canvas — é por isso que, ao clicar em "Enviar teste
-    // agora" estando em Configurações, a imagem saía vazia/quebrada). Por isso trocamos para
-    // a aba Dashboard aqui, e voltamos para a aba de onde o usuário veio ao final.
-    switchTab('dashboard');
+    // Relatório geral (todas as atividades, todos os turnos) — sempre gerado.
+    const poolGeral = allEmployees();
+    const aggGeral = computeAggregate(poolGeral, hoje, hoje);
+    const rowsGeral = buildResumoSetorAtividadeRows(aggGeral, poolGeral);
+    const containerGeral = buildEmailReportContainer(aggGeral, rowsGeral, 'Todos os setores/atividades', dataLabel);
+    tempContainers.push(containerGeral);
     await new Promise(r => setTimeout(r, 60));
-
-    // imagem consolidada (todas as atividades, todos os turnos)
-    fAtividadeEl.value = '__ALL__';
-    fTurnoEl.value = '__ALL__';
-    renderDashboard();
-    await new Promise(r => setTimeout(r, 500)); // aguarda os gráficos redesenharem
     images.push({
-      filename: 'dashboard_geral_' + todayStr() + '.jpg',
-      base64: await capturarImagemDashboard(),
+      filename: 'relatorio_geral_' + hoje + '.jpg',
+      base64: await capturarElementoComoJpeg(containerGeral),
       mimeType: 'image/jpeg'
     });
 
-    // imagens separadas por turno (opcional)
+    // Relatórios extras por turno (opcional).
     if(emailScheduleConfig.porTurno){
       for(const turno of ['1','2']){
-        fTurnoEl.value = turno;
-        renderDashboard();
-        await new Promise(r => setTimeout(r, 500));
+        const poolTurno = poolGeral.filter(e => String(e.turno) === turno);
+        if(poolTurno.length === 0) continue;
+        const aggTurno = computeAggregate(poolTurno, hoje, hoje);
+        const rowsTurno = buildResumoSetorAtividadeRows(aggTurno, poolTurno);
+        const containerTurno = buildEmailReportContainer(aggTurno, rowsTurno, 'Turno ' + turno, dataLabel);
+        tempContainers.push(containerTurno);
+        await new Promise(r => setTimeout(r, 60));
         images.push({
-          filename: 'dashboard_turno' + turno + '_' + todayStr() + '.jpg',
-          base64: await capturarImagemDashboard(),
+          filename: 'relatorio_turno' + turno + '_' + hoje + '.jpg',
+          base64: await capturarElementoComoJpeg(containerTurno),
           mimeType: 'image/jpeg'
         });
       }
@@ -1046,12 +1180,22 @@ async function enviarRelatorioEmailAgora(gatilho){
 
     if(logEl) logEl.textContent = 'Enviando por e-mail...';
 
+    const htmlBody =
+      '<div style="font-family:Arial,Helvetica,sans-serif;">' +
+        '<h2 style="font-family:Georgia,\'Times New Roman\',serif;color:#2b2620;margin:0 0 4px;">Dois Marcos Sementes — Relatório de presença</h2>' +
+        '<p style="font-size:12px;color:#6b6558;margin:0 0 16px;">' + dataLabel + ' · gerado às ' + new Date().toLocaleTimeString('pt-BR') + '</p>' +
+        gerarTextoExplicativoEmail(aggGeral, poolGeral, 'todos os setores/atividades') +
+        '<p style="font-family:Arial,Helvetica,sans-serif;font-size:13.5px;color:#2b2620;margin-top:18px;"><b>Resumo por setor e atividade:</b></p>' +
+        gerarTabelaHtmlEmail(rowsGeral) +
+        '<p style="font-family:Arial,Helvetica,sans-serif;font-size:11.5px;color:#8a8272;margin-top:18px;">Uma imagem com este mesmo resumo (' +
+          (emailScheduleConfig.porTurno ? 'e um extra por turno) ' : ') ') + 'está anexada a este e-mail.</p>' +
+      '</div>';
+
     const payload = {
       token: emailScheduleConfig.token || '',
       emails: emailScheduleConfig.emails.map(d => d.email),
-      subject: 'Dashboard de presença — Dois Marcos Sementes — ' + todayStr(),
-      htmlBody: '<p>Segue em anexo o dashboard de presença de todos os setores/atividades, atualizado em ' +
-        new Date().toLocaleString('pt-BR') + '.</p>',
+      subject: 'Relatório de presença — Dois Marcos Sementes — ' + dataLabel,
+      htmlBody,
       images
     };
 
@@ -1068,9 +1212,6 @@ async function enviarRelatorioEmailAgora(gatilho){
         throw new Error(respJson.error || 'Apps Script retornou erro');
       }
     }catch(parseErr){
-      // Se não conseguirmos ler a resposta (ex.: bloqueio de CORS na leitura), não é
-      // necessariamente uma falha — o Apps Script já pode ter processado o envio.
-      // Só registramos no console para diagnóstico, sem interromper o fluxo.
       console.warn('Não foi possível confirmar a resposta do Apps Script:', parseErr);
       resultInfo = ' (sem confirmação de leitura da resposta — confira sua caixa de entrada)';
     }
@@ -1082,10 +1223,7 @@ async function enviarRelatorioEmailAgora(gatilho){
     if(logEl) logEl.textContent = 'Falha ao enviar o e-mail. Verifique a URL do Apps Script, o token e sua internet.';
     showToast('Falha ao enviar o relatório por e-mail.');
   }finally{
-    fAtividadeEl.value = prevAtividade;
-    fTurnoEl.value = prevTurno;
-    renderDashboard();
-    switchTab(prevTab); // volta para a aba de onde o usuário veio (ex.: Configurações)
+    tempContainers.forEach(c => { if(c && c.parentNode) c.parentNode.removeChild(c); });
   }
 }
 
