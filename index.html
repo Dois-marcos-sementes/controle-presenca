@@ -1001,20 +1001,29 @@ async function enviarRelatorioEmailAgora(gatilho){
 
   if(logEl) logEl.textContent = 'Gerando imagem(ns) do dashboard...';
 
-  // guarda os filtros atuais para restaurar depois
+  // guarda os filtros e a aba atual para restaurar tudo depois
   const fAtividadeEl = document.getElementById('fAtividade');
   const fTurnoEl = document.getElementById('fTurno');
   const prevAtividade = fAtividadeEl.value;
   const prevTurno = fTurnoEl.value;
+  const abaAtivaAntes = document.querySelector('.view-section.active');
+  const prevTab = abaAtivaAntes ? abaAtivaAntes.id.replace('view-', '') : 'dashboard';
 
   try{
     const images = [];
+
+    // A captura só funciona com a aba Dashboard visível (elementos com display:none não
+    // podem ser fotografados pelo html2canvas — é por isso que, ao clicar em "Enviar teste
+    // agora" estando em Configurações, a imagem saía vazia/quebrada). Por isso trocamos para
+    // a aba Dashboard aqui, e voltamos para a aba de onde o usuário veio ao final.
+    switchTab('dashboard');
+    await new Promise(r => setTimeout(r, 60));
 
     // imagem consolidada (todas as atividades, todos os turnos)
     fAtividadeEl.value = '__ALL__';
     fTurnoEl.value = '__ALL__';
     renderDashboard();
-    await new Promise(r => setTimeout(r, 400)); // aguarda os gráficos redesenharem
+    await new Promise(r => setTimeout(r, 500)); // aguarda os gráficos redesenharem
     images.push({
       filename: 'dashboard_geral_' + todayStr() + '.jpg',
       base64: await capturarImagemDashboard(),
@@ -1026,7 +1035,7 @@ async function enviarRelatorioEmailAgora(gatilho){
       for(const turno of ['1','2']){
         fTurnoEl.value = turno;
         renderDashboard();
-        await new Promise(r => setTimeout(r, 400));
+        await new Promise(r => setTimeout(r, 500));
         images.push({
           filename: 'dashboard_turno' + turno + '_' + todayStr() + '.jpg',
           base64: await capturarImagemDashboard(),
@@ -1046,22 +1055,37 @@ async function enviarRelatorioEmailAgora(gatilho){
       images
     };
 
-    await fetch(emailScheduleConfig.appsScriptUrl, {
+    const resp = await fetch(emailScheduleConfig.appsScriptUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // evita preflight CORS no Apps Script
       body: JSON.stringify(payload)
     });
 
-    if(logEl) logEl.textContent = 'E-mail enviado (' + gatilho + ') às ' + new Date().toLocaleTimeString('pt-BR') + ' para ' + emailScheduleConfig.emails.length + ' destinatário(s).';
+    let resultInfo = '';
+    try{
+      const respJson = await resp.json();
+      if(respJson && respJson.ok === false){
+        throw new Error(respJson.error || 'Apps Script retornou erro');
+      }
+    }catch(parseErr){
+      // Se não conseguirmos ler a resposta (ex.: bloqueio de CORS na leitura), não é
+      // necessariamente uma falha — o Apps Script já pode ter processado o envio.
+      // Só registramos no console para diagnóstico, sem interromper o fluxo.
+      console.warn('Não foi possível confirmar a resposta do Apps Script:', parseErr);
+      resultInfo = ' (sem confirmação de leitura da resposta — confira sua caixa de entrada)';
+    }
+
+    if(logEl) logEl.textContent = 'E-mail enviado (' + gatilho + ') às ' + new Date().toLocaleTimeString('pt-BR') + ' para ' + emailScheduleConfig.emails.length + ' destinatário(s) com ' + images.length + ' imagem(ns) anexada(s).' + resultInfo;
     showToast('Relatório enviado por e-mail.');
   }catch(err){
     console.error('Falha ao enviar relatório por e-mail', err);
-    if(logEl) logEl.textContent = 'Falha ao enviar o e-mail. Verifique a URL do Apps Script e sua internet.';
+    if(logEl) logEl.textContent = 'Falha ao enviar o e-mail. Verifique a URL do Apps Script, o token e sua internet.';
     showToast('Falha ao enviar o relatório por e-mail.');
   }finally{
     fAtividadeEl.value = prevAtividade;
     fTurnoEl.value = prevTurno;
     renderDashboard();
+    switchTab(prevTab); // volta para a aba de onde o usuário veio (ex.: Configurações)
   }
 }
 
