@@ -283,9 +283,18 @@
     </div>
     <div class="topbar-right">
       <div class="who"><b id="whoName">—</b><span id="whoScope">—</span></div>
+      <button class="icon-btn" onclick="abrirModalAlterarSenha()">Alterar senha</button>
       <button class="icon-btn" onclick="logout()">Sair</button>
     </div>
   </header>
+
+  <div id="primeiroAcessoBox" style="display:none;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;background:var(--amber-soft);border-bottom:1px solid var(--amber);padding:10px 20px;font-size:13px;">
+    <span>👋 Primeiro acesso? Recomendamos trocar a senha inicial definida para você.</span>
+    <div style="display:flex;gap:8px;align-items:center;">
+      <button class="btn btn-primary btn-sm" onclick="abrirModalAlterarSenha()">Alterar senha agora</button>
+      <button class="icon-btn" onclick="document.getElementById('primeiroAcessoBox').style.display='none';">Depois</button>
+    </div>
+  </div>
 
   <nav class="tabs" id="tabsNav">
     <button data-tab="dashboard" class="active" onclick="switchTab('dashboard')">Dashboard</button>
@@ -847,7 +856,7 @@ async function attemptLogin(){
       return;
     }
     const perfil = perfilDoc.data();
-    session = { usuario: perfil.usuario, atividades: perfil.atividades || [], isMaster: !!perfil.isMaster, perfil: perfil.perfil || 'padrao', uid };
+    session = { usuario: perfil.usuario, atividades: perfil.atividades || [], isMaster: !!perfil.isMaster, perfil: perfil.perfil || 'padrao', uid, senhaAlterada: !!perfil.senhaAlterada };
     return enterApp();
   }catch(e){
     console.error('login falhou', e);
@@ -863,6 +872,112 @@ function logout(){
   document.getElementById('app').style.display = 'none';
   document.getElementById('loginScreen').style.display = 'flex';
   limparCamposLogin();
+}
+
+/* ======================= ALTERAR SENHA ======================= */
+// Disponível para qualquer usuário logado (master, líder ou padrão), a qualquer momento —
+// tanto no primeiro acesso (senha inicial definida pelo master) quanto depois, sempre que
+// a pessoa quiser trocar. Exige a senha atual (reautenticação) por segurança do Firebase.
+function abrirModalAlterarSenha(){
+  if(!session || !fbAuth || !fbAuth.currentUser){
+    showToast('Você precisa estar logado para alterar a senha.');
+    return;
+  }
+  openModal('Alterar senha');
+  const body = document.getElementById('modalBody');
+  body.innerHTML =
+    '<form class="stacked" onsubmit="return submitAlterarSenha(event)">' +
+      '<div class="field">' +
+        '<label>Senha atual</label>' +
+        '<input type="password" id="senhaAtualInput" required autocomplete="current-password">' +
+      '</div>' +
+      '<div class="field">' +
+        '<label>Nova senha</label>' +
+        '<input type="password" id="senhaNovaInput" required minlength="6" autocomplete="new-password" placeholder="mínimo 6 caracteres">' +
+      '</div>' +
+      '<div class="field">' +
+        '<label>Confirmar nova senha</label>' +
+        '<input type="password" id="senhaNovaConfirmInput" required minlength="6" autocomplete="new-password">' +
+      '</div>' +
+      '<div id="alterarSenhaMsg" style="font-size:12px;color:var(--red);margin-bottom:8px;display:none;"></div>' +
+      '<div class="form-actions">' +
+        '<button class="btn btn-primary" type="submit" id="btnSalvarSenha" style="margin-top:0;">Salvar nova senha</button>' +
+      '</div>' +
+    '</form>';
+}
+
+async function submitAlterarSenha(ev){
+  ev.preventDefault();
+  const msgEl = document.getElementById('alterarSenhaMsg');
+  const btn = document.getElementById('btnSalvarSenha');
+  msgEl.style.display = 'none';
+
+  const senhaAtual = document.getElementById('senhaAtualInput').value;
+  const senhaNova = document.getElementById('senhaNovaInput').value;
+  const senhaNovaConfirm = document.getElementById('senhaNovaConfirmInput').value;
+
+  if(senhaNova.length < 6){
+    msgEl.textContent = 'A nova senha deve ter pelo menos 6 caracteres.';
+    msgEl.style.display = 'block';
+    return false;
+  }
+  if(senhaNova !== senhaNovaConfirm){
+    msgEl.textContent = 'A confirmação não bate com a nova senha.';
+    msgEl.style.display = 'block';
+    return false;
+  }
+  if(senhaNova === senhaAtual){
+    msgEl.textContent = 'A nova senha precisa ser diferente da senha atual.';
+    msgEl.style.display = 'block';
+    return false;
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'Salvando...';
+
+  try{
+    const email = session.usuario.toLowerCase() + AUTH_EMAIL_DOMAIN;
+    const credential = firebase.auth.EmailAuthProvider.credential(email, senhaAtual);
+    // Reautentica antes de trocar a senha — o Firebase exige isso por segurança quando o
+    // login foi feito há um tempo, e é uma boa prática confirmar a senha atual de qualquer forma.
+    await fbAuth.currentUser.reauthenticateWithCredential(credential);
+    await fbAuth.currentUser.updatePassword(senhaNova);
+
+    // Marca no perfil que a senha já foi trocada — só usamos isso para não repetir o aviso
+    // de "primeiro acesso" depois que a pessoa já trocou a senha inicial.
+    if(fbDb && session.uid){
+      await fbDb.collection('usuarios_perfil').doc(session.uid).set({ senhaAlterada: true }, { merge: true });
+    }
+    session.senhaAlterada = true;
+
+    closeModal();
+    showToast('Senha alterada com sucesso.');
+  }catch(err){
+    console.error('Falha ao alterar senha', err);
+    if(err && err.code === 'auth/wrong-password'){
+      msgEl.textContent = 'Senha atual incorreta.';
+    } else if(err && err.code === 'auth/weak-password'){
+      msgEl.textContent = 'A nova senha é muito fraca. Use pelo menos 6 caracteres.';
+    } else if(err && err.code === 'auth/too-many-requests'){
+      msgEl.textContent = 'Muitas tentativas. Aguarde um pouco e tente novamente.';
+    } else {
+      msgEl.textContent = 'Não foi possível alterar a senha. Verifique sua senha atual e sua internet.';
+    }
+    msgEl.style.display = 'block';
+  }finally{
+    btn.disabled = false;
+    btn.textContent = 'Salvar nova senha';
+  }
+  return false;
+}
+
+// Aviso não-intrusivo de "primeiro acesso": se a pessoa ainda não trocou a senha inicial
+// (definida pelo master ao criar o usuário), sugerimos a troca com um toque para abrir
+// o modal direto — sem bloquear o uso do app.
+function avisarPrimeiroAcessoSeNecessario(){
+  if(!session || session.senhaAlterada) return;
+  const box = document.getElementById('primeiroAcessoBox');
+  if(box) box.style.display = 'flex';
 }
 
 async function loadExtraEmployees(){
@@ -1366,6 +1481,7 @@ async function enterApp(){
   document.getElementById('whoScope').textContent = perfilLabel;
   document.getElementById('tabConfigBtn').style.display = session.isMaster ? 'inline-block' : 'none';
   document.getElementById('tabPessoalBtn').style.display = podeGerenciarPessoal() ? 'inline-block' : 'none';
+  avisarPrimeiroAcessoSeNecessario();
 
   await loadSetores();
   await loadAtividades();
@@ -2830,7 +2946,7 @@ async function createUser(ev){
   try{
     const cred = await fbSecondaryAuth.createUserWithEmailAndPassword(email, senha);
     const uid = cred.user.uid;
-    await fbDb.collection('usuarios_perfil').doc(uid).set({ usuario, atividades, perfil: perfilSel, isMaster: false });
+    await fbDb.collection('usuarios_perfil').doc(uid).set({ usuario, atividades, perfil: perfilSel, isMaster: false, senhaAlterada: false });
     await fbSecondaryAuth.signOut();
     await loadUsersPerfil();
     renderUserList();
