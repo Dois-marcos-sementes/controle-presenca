@@ -194,15 +194,24 @@
     display:inline-flex; align-items:center; justify-content:center; width:24px; height:24px; border-radius:50%;
     font-size:12px; font-weight:700; margin-top:6px; color:#fff;
   }
+  .grade5x1-letras{ display:flex; flex-wrap:wrap; gap:4px; }
+  .grade5x1-letra.exc{ box-shadow:0 0 0 2px var(--amber); }
   .grade5x1-letra.gA{ background:#4C7A3F; }
   .grade5x1-letra.gB{ background:#2E5F8A; }
   .grade5x1-letra.gC{ background:#C77B23; }
   .grade5x1-letra.gD{ background:#B23B2E; }
   .grade5x1-letra.gE{ background:#6E4C9E; }
   .grade5x1-letra.gF{ background:#5B6B5C; }
+  .grade5x1-letra.gG{ background:#1E7F72; }
+  .grade5x1-letra.gH{ background:#8A5A2E; }
   .grade5x1-legenda{ display:flex; gap:12px; flex-wrap:wrap; justify-content:center; margin-top:14px; font-size:11.5px; color:var(--ink-soft); }
   .grade5x1-legenda span{ display:inline-flex; align-items:center; gap:5px; }
   .grade5x1-legenda .dot{ width:12px; height:12px; border-radius:50%; display:inline-block; }
+  .grade-export-header{ display:flex; align-items:center; gap:12px; padding:16px 16px 4px; }
+  .grade-export-header img{ height:44px; width:auto; display:block; flex:none; border-radius:4px; }
+  .grade-export-header-txt{ display:flex; flex-direction:column; }
+  .grade-export-header-txt b{ font-family:var(--serif); font-size:16px; color:var(--ink); }
+  .grade-export-header-txt span{ font-size:11.5px; color:var(--ink-soft); }
 
   .empty-state{ padding:40px 20px; text-align:center; color:var(--ink-soft); font-size:13px; }
 
@@ -371,7 +380,7 @@
         <div class="panel-body">
           <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;">
             <button class="btn btn-ghost btn-sm" id="tabFolgaManual" onclick="trocarAbaFolgaDashboard('manual')">Escalas manuais</button>
-            <button class="btn btn-ghost btn-sm" id="tabFolga5x1" onclick="trocarAbaFolgaDashboard('5x1')">Rodízio 5x1 (grupos A–F)</button>
+            <button class="btn btn-ghost btn-sm" id="tabFolga5x1" onclick="trocarAbaFolgaDashboard('5x1')">Rodízio (5x1 / 6x2)</button>
           </div>
 
           <div id="folgaDashboardManualView">
@@ -391,16 +400,28 @@
           <div id="folgaDashboard5x1View" style="display:none;">
             <div class="toolbar" style="padding:0;border:none;background:transparent;margin-bottom:16px;">
               <div class="field">
-                <label>Mês</label>
-                <input type="month" id="grade5x1MesDash" onchange="renderGrade5x1('grade5x1GridDash')">
+                <label>Escala</label>
+                <select id="gradeRodizioEscalaDash" onchange="renderGradeRodizio('grade5x1GridDash')">
+                  <option value="5x1">5x1 (grupos A–F)</option>
+                  <option value="6x2">6x2 (grupos A–H)</option>
+                </select>
               </div>
-              <button class="btn btn-ghost btn-sm" type="button" onclick="exportarGradeComoImagem('grade5x1WrapDash','calendario-5x1')">🖼️ Exportar como imagem</button>
+              <div class="field">
+                <label>De (mês)</label>
+                <input type="month" id="gradeRodizioMesDeDash" onchange="renderGradeRodizio('grade5x1GridDash')">
+              </div>
+              <div class="field">
+                <label>Até (mês)</label>
+                <input type="month" id="gradeRodizioMesAteDash" onchange="renderGradeRodizio('grade5x1GridDash')">
+              </div>
+              <button class="btn btn-ghost btn-sm" type="button" onclick="exportarGradeComoImagem('grade5x1WrapDash','calendario-rodizio')">🖼️ Exportar como imagem</button>
             </div>
             <div id="grade5x1WrapDash" style="background:var(--panel);">
               <div id="grade5x1GridDash"></div>
             </div>
           </div>
         </div>
+
       </div>
 
       <div class="kpi-grid" id="kpiGridPdf">
@@ -658,11 +679,12 @@
         <div class="panel-body">
           <div class="note-box" style="margin-bottom:16px;">
             A escala <b>6x1</b> (folga sempre aos domingos) já é calculada automaticamente e não precisa de
-            cadastro aqui. A escala <b>5x1</b> também é automática pelo rodízio dos grupos <b>A a F</b>
-            (definido no cadastro de cada colaborador) — use a opção <b>"Rodízio 5x1 — exceção de grupo"</b>
-            apenas para casos especiais, como um feriado que emenda com a folga de um grupo específico (ou de
-            todos). Use os demais tipos para escalas que não têm cálculo automático — como <b>Comercial</b>,
-            <b>5x2</b> ou <b>6x2</b> — ou para um feriado que afete todas as escalas de uma vez.
+            cadastro aqui. As escalas <b>5x1</b> e <b>6x2</b> também são automáticas, por rodízio de grupos
+            (<b>A–F</b> no 5x1, <b>A–H</b> no 6x2 — definido no cadastro de cada colaborador) — use a opção
+            <b>"Rodízio — exceção de grupo"</b> apenas para casos especiais, como um feriado que emenda com a
+            folga de um grupo específico (ou de todos). Use os demais tipos para escalas sem rodízio
+            automático — como <b>Comercial</b> ou <b>5x2</b> — ou para um feriado que afete todas as escalas
+            de uma vez.
           </div>
           <form class="stacked" onsubmit="return createFolgaCalendar(event)" style="margin-bottom:18px;">
             <div class="toolbar" style="padding:0;border:none;background:transparent;margin-bottom:0;align-items:flex-end;">
@@ -676,7 +698,7 @@
                 <select id="newFolgaTipo" onchange="toggleFolgaTipoFields()">
                   <option value="semanal">Dia da semana fixo (recorrente)</option>
                   <option value="data">Data específica (ex: feriado)</option>
-                  <option value="grupo5x1">Rodízio 5x1 — exceção de grupo (A–F)</option>
+                  <option value="grupoRodizio">Rodízio (5x1 ou 6x2) — exceção de grupo</option>
                 </select>
               </div>
               <div class="field" id="newFolgaDiaSemanaWrap">
@@ -691,17 +713,16 @@
                   <option value="6">Sábado</option>
                 </select>
               </div>
-              <div class="field" id="newFolgaGrupoWrap" style="display:none;">
-                <label>Grupo (rodízio 5x1)</label>
-                <select id="newFolgaGrupo">
-                  <option value="A">Grupo A</option>
-                  <option value="B">Grupo B</option>
-                  <option value="C">Grupo C</option>
-                  <option value="D">Grupo D</option>
-                  <option value="E">Grupo E</option>
-                  <option value="F">Grupo F</option>
-                  <option value="TODOS">Todos os grupos</option>
+              <div class="field" id="newFolgaEscalaRodizioWrap" style="display:none;">
+                <label>Rodízio</label>
+                <select id="newFolgaEscalaRodizio" onchange="populateNewFolgaGrupoOptions()">
+                  <option value="5x1">5x1 (grupos A–F)</option>
+                  <option value="6x2">6x2 (grupos A–H)</option>
                 </select>
+              </div>
+              <div class="field" id="newFolgaGrupoWrap" style="display:none;">
+                <label>Grupo</label>
+                <select id="newFolgaGrupo"></select>
               </div>
               <div class="field" id="newFolgaDataWrap" style="display:none;">
                 <label>Data</label>
@@ -718,20 +739,32 @@
         </div>
       </div>
 
-      <!-- ===== CALENDÁRIO 5x1 — RODÍZIO DE GRUPOS (A–F), visual + exportar imagem ===== -->
+      <!-- ===== CALENDÁRIO DE RODÍZIO (5x1 / 6x2), visual + exportar imagem ===== -->
       <div class="panel">
         <div class="panel-head">
-          <h2>Calendário 5x1 — rodízio de grupos (A–F)</h2>
+          <h2>Calendário de rodízio (5x1 / 6x2)</h2>
           <div class="meta">calculado automaticamente a partir de 01/07/2026</div>
         </div>
         <div class="panel-body">
           <div class="toolbar" style="padding:0;border:none;background:transparent;margin-bottom:16px;">
             <div class="field">
-              <label>Mês</label>
-              <input type="month" id="grade5x1Mes" onchange="renderGrade5x1('grade5x1Grid')">
+              <label>Escala</label>
+              <select id="gradeRodizioEscala" onchange="renderGradeRodizio('grade5x1Grid')">
+                <option value="5x1">5x1 (grupos A–F)</option>
+                <option value="6x2">6x2 (grupos A–H)</option>
+              </select>
             </div>
-            <button class="btn btn-ghost btn-sm" type="button" onclick="exportarGradeComoImagem('grade5x1Wrap','calendario-5x1')">🖼️ Exportar como imagem</button>
+            <div class="field">
+              <label>De (mês)</label>
+              <input type="month" id="gradeRodizioMesDe" onchange="renderGradeRodizio('grade5x1Grid')">
+            </div>
+            <div class="field">
+              <label>Até (mês)</label>
+              <input type="month" id="gradeRodizioMesAte" onchange="renderGradeRodizio('grade5x1Grid')">
+            </div>
+            <button class="btn btn-ghost btn-sm" type="button" onclick="exportarGradeComoImagem('grade5x1Wrap','calendario-rodizio')">🖼️ Exportar como imagem</button>
           </div>
+          <p style="font-size:11.5px;color:var(--ink-soft);margin:-8px 0 14px;">Selecione quantos meses precisar — de um único mês até um período mais longo.</p>
           <div id="grade5x1Wrap" style="background:var(--panel);">
             <div id="grade5x1Grid"></div>
           </div>
@@ -846,6 +879,35 @@ function folgaGroupForDate(dateStr){
   const diffDays = Math.round((d - REF_DATE)/86400000);
   const idx = ((diffDays % 6)+6)%6;
   return LETTERS[idx];
+}
+
+/* ======================= ESCALAS DE RODÍZIO GENÉRICAS (5x1, 6x2, ...) =======================
+   Modelo: um ciclo de N dias (dias trabalhados + dias de folga), com N grupos (letras),
+   cada grupo defasado em 1 dia em relação ao anterior — assim, todo dia sempre há grupo(s) de
+   folga cobrindo a operação. O 5x1 (5 dias trabalhados + 1 de folga) usa esse mesmo modelo com
+   N=6 e é o caso que já existia (função folgaGroupForDate acima, mantida por compatibilidade).
+   O 6x2 (6 dias trabalhados + 2 de folga, também não-fixo) usa N=8, com 2 grupos de folga por dia. */
+const ESCALAS_RODIZIO = {
+  '5x1': { trabalho:5, folga:1, ciclo:6, letras:['A','B','C','D','E','F'], label:'5x1 (grupos A–F)' },
+  '6x2': { trabalho:6, folga:2, ciclo:8, letras:['A','B','C','D','E','F','G','H'], label:'6x2 (grupos A–H)' }
+};
+
+function grupoEstaDeFolga(escalaKey, letra, dateStr){
+  const cfg = ESCALAS_RODIZIO[escalaKey];
+  if(!cfg || !letra) return false;
+  const idxLetra = cfg.letras.indexOf(String(letra).toUpperCase());
+  if(idxLetra === -1) return false;
+  const d = new Date(dateStr+'T00:00:00');
+  const diffDays = Math.round((d - REF_DATE)/86400000);
+  const pos = ((diffDays - idxLetra) % cfg.ciclo + cfg.ciclo) % cfg.ciclo;
+  return pos < cfg.folga;
+}
+
+// Retorna todas as letras que estão de folga numa data (pode ser mais de uma, ex.: 6x2 tem 2 por dia).
+function gruposDeFolgaNaData(escalaKey, dateStr){
+  const cfg = ESCALAS_RODIZIO[escalaKey];
+  if(!cfg) return [];
+  return cfg.letras.filter(l => grupoEstaDeFolga(escalaKey, l, dateStr));
 }
 
 function toMinutes(hhmm){ const [h,m] = hhmm.split(':').map(Number); return h*60+m; }
@@ -1731,7 +1793,7 @@ async function enterApp(){
     populateNewAtividadeSetorSelect();
     renderFolgaCalendarList();
     populateFolgaEscalaDatalist();
-    renderGrade5x1('grade5x1Grid');
+    renderGradeRodizio('grade5x1Grid');
     await loadEmailScheduleConfig();
     fillEmailScheduleFormFromConfig();
     startEmailScheduler();
@@ -1929,27 +1991,42 @@ function computeStatus(emp, dateStr, hasDataForDate){
   const escala = (emp.escalaTipo || '').toUpperCase();
   const is5x1 = escala.indexOf('5X1') !== -1;
   const is6x1 = escala.indexOf('6X1') !== -1;
+  const is6x2 = escala.indexOf('6X2') !== -1;
 
-  if(is5x1 && emp.folgaGrupo){
-    const offGroup = folgaGroupForDate(dateStr);
-    if(emp.folgaGrupo.toUpperCase() === offGroup) return { code:'folga', label:'Folga (DSR)' };
-    // Exceções cadastradas manualmente para o rodízio 5x1 (ex.: feriado que emenda com a folga
-    // de um grupo específico, ou de todos os grupos, numa data fora do rodízio normal).
-    const excecao5x1 = folgasCache.find(f=> f.tipo === 'grupo5x1' && f.data === dateStr &&
-      (f.grupo === 'TODOS' || f.grupo === emp.folgaGrupo.toUpperCase()));
-    if(excecao5x1) return { code:'folga', label: excecao5x1.obs ? ('Folga — '+excecao5x1.obs) : 'Folga (DSR)' };
+  // Exceção manual do rodízio (5x1 ou 6x2), cadastrada no calendário de folga: aceita tanto o
+  // tipo atual "grupoRodizio" quanto o antigo "grupo5x1" (mantido por compatibilidade), tratado
+  // como se fosse do rodízio 5x1.
+  function excecaoRodizio(escalaKey, grupo){
+    if(!grupo) return null;
+    return folgasCache.find(f=>{
+      if(f.data !== dateStr) return false;
+      if(f.tipo === 'grupo5x1' && escalaKey === '5x1') { /* compat */ }
+      else if(f.tipo === 'grupoRodizio' && (f.escala||'').toLowerCase() === escalaKey) { /* ok */ }
+      else return false;
+      return f.grupo === 'TODOS' || f.grupo === grupo.toUpperCase();
+    }) || null;
+  }
+
+  if((is5x1 || is6x2) && emp.folgaGrupo){
+    const escalaKey = is5x1 ? '5x1' : '6x2';
+    if(grupoEstaDeFolga(escalaKey, emp.folgaGrupo, dateStr)) return { code:'folga', label:'Folga (DSR)' };
+    // Exceções cadastradas manualmente para o rodízio (ex.: feriado que emenda com a folga de um
+    // grupo específico, ou de todos os grupos, numa data fora do rodízio normal).
+    const excecao = excecaoRodizio(escalaKey, emp.folgaGrupo);
+    if(excecao) return { code:'folga', label: excecao.obs ? ('Folga — '+excecao.obs) : 'Folga (DSR)' };
   }
   if(is6x1){
     const wd = new Date(dateStr+'T00:00:00').getDay();
     if(wd === 0) return { code:'folga', label:'Folga (DSR)' };
   }
 
-  // Escalas fora do 5x1/6x1 automático (ex.: Comercial, 5x2, 6x2) ou feriados que afetam
+  // Escalas fora do 5x1/6x1/6x2 automático (ex.: Comercial, 5x2) ou feriados que afetam
   // "Todas as escalas" — checados a partir do calendário de folga cadastrado manualmente.
   const folgaManual = folgaCalendarioParaEscalaData(emp.escalaTipo, dateStr);
   if(folgaManual) return { code:'folga', label: folgaManual.obs ? ('Folga — '+folgaManual.obs) : 'Folga (DSR)' };
 
   if(!hasDataForDate) return { code:'sem-dados', label:'Sem dados de ponto' };
+
 
   const jornada = parseJornada(emp.jornada);
   const refeicaoMin = parseRefeicaoMinutes(emp.refeicao);
@@ -3335,18 +3412,30 @@ function populateFolgaEscalaDatalist(){
   dl.innerHTML = escalasEmUso().concat(['Todas as escalas']).map(e=>'<option value="'+escapeHtml(e)+'">').join('');
 }
 
+function populateNewFolgaGrupoOptions(){
+  const escalaKey = document.getElementById('newFolgaEscalaRodizio').value;
+  const cfg = ESCALAS_RODIZIO[escalaKey];
+  const sel = document.getElementById('newFolgaGrupo');
+  sel.innerHTML = cfg.letras.map(l=>'<option value="'+l+'">Grupo '+l+'</option>').join('') +
+    '<option value="TODOS">Todos os grupos</option>';
+  const escalaInput = document.getElementById('newFolgaEscala');
+  if(escalaInput.readOnly) escalaInput.value = escalaKey;
+}
+
 function toggleFolgaTipoFields(){
   const tipo = document.getElementById('newFolgaTipo').value;
   document.getElementById('newFolgaDiaSemanaWrap').style.display = tipo === 'semanal' ? '' : 'none';
-  document.getElementById('newFolgaDataWrap').style.display = (tipo === 'data' || tipo === 'grupo5x1') ? '' : 'none';
-  document.getElementById('newFolgaGrupoWrap').style.display = tipo === 'grupo5x1' ? '' : 'none';
+  document.getElementById('newFolgaDataWrap').style.display = (tipo === 'data' || tipo === 'grupoRodizio') ? '' : 'none';
+  document.getElementById('newFolgaGrupoWrap').style.display = tipo === 'grupoRodizio' ? '' : 'none';
+  document.getElementById('newFolgaEscalaRodizioWrap').style.display = tipo === 'grupoRodizio' ? '' : 'none';
   const escalaInput = document.getElementById('newFolgaEscala');
-  if(tipo === 'grupo5x1'){
-    escalaInput.value = '5x1';
+  if(tipo === 'grupoRodizio'){
+    populateNewFolgaGrupoOptions();
+    escalaInput.value = document.getElementById('newFolgaEscalaRodizio').value;
     escalaInput.readOnly = true;
   } else {
     escalaInput.readOnly = false;
-    if(escalaInput.value === '5x1') escalaInput.value = '';
+    if(escalaInput.value === '5x1' || escalaInput.value === '6x2') escalaInput.value = '';
   }
 }
 
@@ -3366,8 +3455,8 @@ function renderFolgaCalendarList(){
     const idx = folgasCache.indexOf(f);
     const quando = f.tipo === 'semanal'
       ? 'Toda ' + DIAS_SEMANA[Number(f.diaSemana)].toLowerCase() + ' (recorrente)'
-      : f.tipo === 'grupo5x1'
-        ? 'Grupo ' + (f.grupo === 'TODOS' ? 'todos' : f.grupo) + ' — dia ' + formatDateBR(f.data) + ' (exceção)'
+      : (f.tipo === 'grupoRodizio' || f.tipo === 'grupo5x1')
+        ? 'Grupo ' + (f.grupo === 'TODOS' ? 'todos' : f.grupo) + ' — dia ' + formatDateBR(f.data) + ' (exceção rodízio)'
         : 'Dia ' + formatDateBR(f.data);
     const obs = f.obs ? (' <span class="tag">'+escapeHtml(f.obs)+'</span>') : '';
     return '<div class="user-row"><div><span class="u-name">'+escapeHtml(f.escala)+'</span><span class="tag">'+quando+'</span>'+obs+'</div>'+
@@ -3385,8 +3474,8 @@ async function createFolgaCalendar(ev){
   const entry = { id: 'f'+Date.now()+Math.random().toString(36).slice(2,7), escala, tipo, obs };
   if(tipo === 'semanal'){
     entry.diaSemana = document.getElementById('newFolgaDiaSemana').value;
-  } else if(tipo === 'grupo5x1'){
-    entry.escala = '5x1';
+  } else if(tipo === 'grupoRodizio'){
+    entry.escala = document.getElementById('newFolgaEscalaRodizio').value;
     entry.grupo = document.getElementById('newFolgaGrupo').value;
     const data = document.getElementById('newFolgaData').value;
     if(!data){ showToast('Informe a data da exceção.'); return false; }
@@ -3420,54 +3509,120 @@ async function deleteFolgaCalendar(id){
   if(document.getElementById('view-dashboard').classList.contains('active')) renderDashboard();
 }
 
-/* ======================= CALENDÁRIO 5x1 — GRADE VISUAL (grupos A–F) ======================= */
-// Monta o <input type="month"> correspondente a uma grade (por convenção de nomes dos ids).
-function inputMesParaGrade(gridId){
-  if(gridId === 'grade5x1GridDash') return document.getElementById('grade5x1MesDash');
-  return document.getElementById('grade5x1Mes');
+/* ======================= CALENDÁRIO DE RODÍZIO — GRADE VISUAL (5x1 / 6x2) ======================= */
+const LIMITE_MESES_GRADE = 12; // trava de segurança para não gerar/exportar um calendário gigante
+
+// Localiza os controles (escala + mês de/até) correspondentes a uma grade, por convenção de nomes
+// dos ids: a versão do Dashboard tem sufixo "Dash".
+function controlesParaGrade(gridId){
+  const dash = gridId.endsWith('Dash');
+  const sufixo = dash ? 'Dash' : '';
+  return {
+    escalaSel: document.getElementById('gradeRodizioEscala'+sufixo),
+    mesDe: document.getElementById('gradeRodizioMesDe'+sufixo),
+    mesAte: document.getElementById('gradeRodizioMesAte'+sufixo)
+  };
 }
 
-function renderGrade5x1(gridId){
-  const grid = document.getElementById(gridId);
-  const mesInput = inputMesParaGrade(gridId);
-  if(!grid || !mesInput) return;
-  if(!mesInput.value) mesInput.value = new Date().toISOString().slice(0,7);
-  const [ano, mes] = mesInput.value.split('-').map(Number);
+// Pega o logotipo já carregado no topo do app (evita duplicar a imagem em base64 no código).
+function getLogoDataUrl(){
+  const img = document.querySelector('.topbar .brand-logo');
+  return img ? img.src : null;
+}
+
+// Letras com folga extra numa data específica, por exceção cadastrada manualmente (grupo específico
+// ou "TODOS"), para a escala de rodízio informada. Usado para destacar exceções na grade visual.
+function gruposExcecaoNaData(escalaKey, dateStr){
+  const grupos = new Set();
+  folgasCache.forEach(f=>{
+    const ehExcecaoDestaEscala = (f.tipo === 'grupoRodizio' && (f.escala||'').toLowerCase() === escalaKey) ||
+      (f.tipo === 'grupo5x1' && escalaKey === '5x1');
+    if(!ehExcecaoDestaEscala || f.data !== dateStr) return;
+    if(f.grupo === 'TODOS') ESCALAS_RODIZIO[escalaKey].letras.forEach(l=>grupos.add(l));
+    else grupos.add(f.grupo);
+  });
+  return grupos;
+}
+
+function renderMesRodizioHTML(escalaKey, ano, mes){
+  const cfg = ESCALAS_RODIZIO[escalaKey];
   const primeiroDia = new Date(ano, mes-1, 1);
   const totalDias = new Date(ano, mes, 0).getDate();
   const offsetSemana = primeiroDia.getDay(); // 0=domingo
-
   const nomeMes = primeiroDia.toLocaleDateString('pt-BR', { month:'long', year:'numeric' });
 
-  let linhas = '<tr>' + DIAS_SEMANA_ABREV.map(d=>'<th>'+d+'</th>').join('') + '</tr>';
+  const cabecalho = '<tr>' + DIAS_SEMANA_ABREV.map(d=>'<th>'+d+'</th>').join('') + '</tr>';
   let celulas = '';
   for(let i=0;i<offsetSemana;i++) celulas += '<td class="vazio"></td>';
   for(let dia=1; dia<=totalDias; dia++){
     const dateStr = ano+'-'+String(mes).padStart(2,'0')+'-'+String(dia).padStart(2,'0');
-    const letra = folgaGroupForDate(dateStr);
-    celulas += '<td><div class="grade5x1-dia">'+dia+'</div><div class="grade5x1-letra g'+letra+'">'+letra+'</div></td>';
+    const gruposAutomaticos = new Set(gruposDeFolgaNaData(escalaKey, dateStr));
+    const gruposExcecao = gruposExcecaoNaData(escalaKey, dateStr);
+    const todasLetras = cfg.letras.filter(l => gruposAutomaticos.has(l) || gruposExcecao.has(l));
+    const badges = todasLetras.map(l=>{
+      const cls = gruposExcecao.has(l) && !gruposAutomaticos.has(l) ? 'grade5x1-letra g'+l+' exc' : 'grade5x1-letra g'+l;
+      return '<span class="'+cls+'" title="'+(gruposExcecao.has(l) ? 'Exceção cadastrada' : 'Folga do rodízio')+'">'+l+'</span>';
+    }).join(' ');
+    celulas += '<td><div class="grade5x1-dia">'+dia+'</div><div class="grade5x1-letras">'+badges+'</div></td>';
   }
   const totalCelulas = offsetSemana + totalDias;
   const sobra = (7 - (totalCelulas % 7)) % 7;
   for(let i=0;i<sobra;i++) celulas += '<td class="vazio"></td>';
 
-  // Quebra as células em linhas de 7
   const tds = celulas.match(/<td[\s\S]*?<\/td>/g) || [];
   let corpo = '';
-  for(let i=0;i<tds.length;i+=7){
-    corpo += '<tr>'+tds.slice(i,i+7).join('')+'</tr>';
-  }
+  for(let i=0;i<tds.length;i+=7) corpo += '<tr>'+tds.slice(i,i+7).join('')+'</tr>';
 
-  const legenda = LETTERS.map(l=>'<span><span class="dot grade5x1-letra g'+l+'" style="width:16px;height:16px;font-size:9px;">'+l+'</span> Grupo '+l+'</span>').join('');
-
-  grid.innerHTML = '<div class="grade5x1">' +
+  return '<div class="grade5x1">' +
     '<div class="grade5x1-titulo">'+nomeMes+'</div>' +
-    '<table class="grade5x1-tabela"><thead>'+linhas+'</thead><tbody>'+corpo+'</tbody></table>' +
-    '<div class="grade5x1-legenda">'+legenda+'</div>' +
+    '<table class="grade5x1-tabela"><thead>'+cabecalho+'</thead><tbody>'+corpo+'</tbody></table>' +
     '</div>';
 }
 
-// Exporta o conteúdo de um contêiner (ex.: a grade do calendário 5x1) como arquivo PNG,
+// Renderiza a grade — de um único mês até vários meses seguidos, conforme o período escolhido.
+function renderGradeRodizio(gridId){
+  const grid = document.getElementById(gridId);
+  const { escalaSel, mesDe, mesAte } = controlesParaGrade(gridId);
+  if(!grid || !escalaSel || !mesDe || !mesAte) return;
+  const hojeMes = new Date().toISOString().slice(0,7);
+  if(!mesDe.value) mesDe.value = hojeMes;
+  if(!mesAte.value) mesAte.value = mesDe.value;
+
+  const escalaKey = escalaSel.value;
+  const cfg = ESCALAS_RODIZIO[escalaKey];
+
+  let [anoIni, mesIni] = mesDe.value.split('-').map(Number);
+  let [anoFim, mesFim] = mesAte.value.split('-').map(Number);
+  let idxIni = anoIni*12 + (mesIni-1);
+  let idxFim = anoFim*12 + (mesFim-1);
+  if(idxFim < idxIni){ const tmp = idxIni; idxIni = idxFim; idxFim = tmp; }
+
+  let avisoLimite = false;
+  if(idxFim - idxIni + 1 > LIMITE_MESES_GRADE){
+    idxFim = idxIni + LIMITE_MESES_GRADE - 1;
+    avisoLimite = true;
+  }
+
+  const logo = getLogoDataUrl();
+  let html = '<div class="grade-export-header">' +
+    (logo ? '<img src="'+logo+'" alt="Dois Marcos Sementes">' : '') +
+    '<div class="grade-export-header-txt"><b>Dois Marcos Sementes</b><span>Calendário de rodízio — '+cfg.label+'</span></div>' +
+    '</div>';
+
+  for(let idx=idxIni; idx<=idxFim; idx++){
+    const ano = Math.floor(idx/12);
+    const mes = (idx % 12) + 1;
+    html += renderMesRodizioHTML(escalaKey, ano, mes);
+  }
+
+  const legenda = cfg.letras.map(l=>'<span><span class="dot grade5x1-letra g'+l+'" style="width:16px;height:16px;font-size:9px;">'+l+'</span> Grupo '+l+'</span>').join('');
+  html += '<div class="grade5x1-legenda">'+legenda+'</div>';
+
+  grid.innerHTML = html;
+  if(avisoLimite) showToast('Mostrando os primeiros '+LIMITE_MESES_GRADE+' meses do período selecionado.');
+}
+
+// Exporta o conteúdo de um contêiner (ex.: a grade do calendário de rodízio) como arquivo PNG,
 // usando o html2canvas que já é carregado pelo app para o export do dashboard em PDF.
 async function exportarGradeComoImagem(wrapId, nomeArquivo){
   if(typeof html2canvas === 'undefined'){
@@ -3489,7 +3644,7 @@ async function exportarGradeComoImagem(wrapId, nomeArquivo){
   }
 }
 
-// Alterna, no painel do Dashboard, entre a lista de folgas manuais e a grade do rodízio 5x1.
+// Alterna, no painel do Dashboard, entre a lista de folgas manuais e a grade do rodízio (5x1/6x2).
 function trocarAbaFolgaDashboard(aba){
   const manualView = document.getElementById('folgaDashboardManualView');
   const view5x1 = document.getElementById('folgaDashboard5x1View');
@@ -3500,7 +3655,7 @@ function trocarAbaFolgaDashboard(aba){
   view5x1.style.display = ativo ? '' : 'none';
   tabManual.style.background = ativo ? '' : 'var(--green-soft)';
   tab5x1.style.background = ativo ? 'var(--green-soft)' : '';
-  if(ativo) renderGrade5x1('grade5x1GridDash');
+  if(ativo) renderGradeRodizio('grade5x1GridDash');
 }
 
 
@@ -3524,6 +3679,7 @@ function calcularOcorrenciasFolga(dateFrom, dateTo){
     const dateStr = cursor.toISOString().slice(0,10);
     const wd = cursor.getDay();
     folgasCache.forEach(f=>{
+      if(f.tipo === 'grupoRodizio' || f.tipo === 'grupo5x1') return; // exceções de rodízio aparecem na aba do rodízio
       const bate = f.tipo === 'semanal' ? Number(f.diaSemana) === wd : f.data === dateStr;
       if(bate) ocorrencias.push({ data: dateStr, escala: f.escala, obs: f.obs, tipo: f.tipo });
     });
@@ -3545,9 +3701,9 @@ function abrirCalendarioFolgaDashboard(){
     const d = new Date(); d.setDate(d.getDate()+30);
     document.getElementById('folgaViewTo').value = d.toISOString().slice(0,10);
   }
-  if(!document.getElementById('grade5x1MesDash').value){
-    document.getElementById('grade5x1MesDash').value = new Date().toISOString().slice(0,7);
-  }
+  const hojeMes = new Date().toISOString().slice(0,7);
+  if(!document.getElementById('gradeRodizioMesDeDash').value) document.getElementById('gradeRodizioMesDeDash').value = hojeMes;
+  if(!document.getElementById('gradeRodizioMesAteDash').value) document.getElementById('gradeRodizioMesAteDash').value = hojeMes;
   trocarAbaFolgaDashboard('manual');
   renderFolgaCalendarioDashboard();
 }
