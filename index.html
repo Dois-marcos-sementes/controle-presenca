@@ -683,6 +683,21 @@
               <label>Setor</label>
               <select id="newAtividadeSetor" required></select>
             </div>
+            <div style="display:flex;gap:10px;margin-bottom:10px;">
+              <div class="field" style="margin:0;flex:1;">
+                <label>Tolerância entrada (min)</label>
+                <input type="number" id="newAtividadeTolEntrada" min="0" placeholder="padrão: 7">
+              </div>
+              <div class="field" style="margin:0;flex:1;">
+                <label>Tolerância saída (min)</label>
+                <input type="number" id="newAtividadeTolSaida" min="0" placeholder="padrão: 7">
+              </div>
+            </div>
+            <p style="font-size:11px;color:var(--ink-soft);margin:0 0 10px;">
+              Deixe em branco para usar o padrão (7 min). Use a tolerância de saída maior em atividades
+              distantes da catraca — ex.: se o colaborador costuma bater o ponto 20 a 40 min antes do fim
+              do turno por causa da caminhada até o relógio, ajuste aqui para não marcar como saída antecipada.
+            </p>
             <button class="btn btn-primary btn-sm" type="submit">Adicionar atividade</button>
           </form>
         </div>
@@ -1984,6 +1999,15 @@ function nextDateStr(dateStr){
 
 const GLOBAL_TOLERANCE_MIN = 7; // desconsidera atrasos/saídas antecipadas dentro dessa margem (entrada, saída e refeição)
 
+// Tolerância de entrada/saída pode ser ajustada por atividade (Configurações → Atividades) — útil
+// para atividades distantes da catraca, onde o colaborador bate o ponto de saída bem antes do fim
+// do turno por causa do tempo de caminhada. Sem valor configurado, usa a margem padrão (7 min).
+function toleranciaParaAtividade(atividadeNome, tipo){
+  const a = atividadesCache.find(x => x.nome === atividadeNome);
+  const valor = a ? (tipo === 'entrada' ? a.toleranciaEntradaMin : a.toleranciaSaidaMin) : null;
+  return (valor !== undefined && valor !== null && valor !== '') ? Number(valor) : GLOBAL_TOLERANCE_MIN;
+}
+
 // Minutos desde a meia-noite no horário atual do dispositivo (usado só para detectar,
 // no dia de hoje, quem já está atrasado mas ainda nem bateu entrada).
 function currentMinutesOfDay(){
@@ -2096,7 +2120,7 @@ function computeStatus(emp, dateStr, hasDataForDate){
       const crossesMid = toMinutes(jornada.end) <= toMinutes(jornada.start);
       if(turnoAindaEmAndamento(startMin, endMin, nowMin, crossesMid)){
         const decorrido = minutosDesdeInicioTurno(startMin, nowMin);
-        if(decorrido > GLOBAL_TOLERANCE_MIN){
+        if(decorrido > toleranciaParaAtividade(emp.atividade, 'entrada')){
           return {
             code:'atraso', semEntrada:true, atrasoMin: decorrido,
             label: 'Atrasado · ainda não bateu entrada (' + decorrido + ' min desde o início previsto ' + jornada.start + ')'
@@ -2113,12 +2137,12 @@ function computeStatus(emp, dateStr, hasDataForDate){
   if(entrada && jornada){
     entradaHora = entrada.dataEvento.slice(11,16);
     const diff = toMinutes(entradaHora) - toMinutes(jornada.start);
-    if(diff > GLOBAL_TOLERANCE_MIN) atrasoMin = diff;
+    if(diff > toleranciaParaAtividade(emp.atividade, 'entrada')) atrasoMin = diff;
   }
   if(saida && jornada){
     saidaHora = saida.dataEvento.slice(11,16);
     const diff = toMinutes(jornada.end) - toMinutes(saidaHora);
-    if(diff > GLOBAL_TOLERANCE_MIN) saidaAntecipMin = diff;
+    if(diff > toleranciaParaAtividade(emp.atividade, 'saida')) saidaAntecipMin = diff;
   }
 
   if(atrasoMin > 0){
@@ -3378,10 +3402,34 @@ function renderAtividadeList(){
     box.innerHTML = '<div class="empty-state">Nenhuma atividade cadastrada.</div>';
     return;
   }
-  box.innerHTML = atividadesCache.map((a,idx)=>(
-    '<div class="user-row"><div><span class="u-name">'+escapeHtml(a.nome)+'</span><span class="tag">'+escapeHtml(a.setor||'—')+'</span></div>'+
-    '<button class="btn btn-danger btn-sm" onclick="deleteAtividade('+idx+')">Excluir</button></div>'
-  )).join('');
+  box.innerHTML = atividadesCache.map((a,idx)=>{
+    const tolE = (a.toleranciaEntradaMin !== undefined && a.toleranciaEntradaMin !== null && a.toleranciaEntradaMin !== '') ? a.toleranciaEntradaMin : '';
+    const tolS = (a.toleranciaSaidaMin !== undefined && a.toleranciaSaidaMin !== null && a.toleranciaSaidaMin !== '') ? a.toleranciaSaidaMin : '';
+    return '<div class="user-row" style="flex-wrap:wrap;gap:8px;">' +
+      '<div><span class="u-name">'+escapeHtml(a.nome)+'</span><span class="tag">'+escapeHtml(a.setor||'—')+'</span></div>' +
+      '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">' +
+        '<label style="font-size:10.5px;color:var(--ink-soft);">Tol. entrada</label>' +
+        '<input type="number" min="0" id="tolEntrada_'+idx+'" value="'+tolE+'" placeholder="7" style="width:56px;padding:5px 6px;border:1px solid var(--line);border-radius:5px;font-size:12px;font-family:var(--mono);">' +
+        '<label style="font-size:10.5px;color:var(--ink-soft);">Tol. saída</label>' +
+        '<input type="number" min="0" id="tolSaida_'+idx+'" value="'+tolS+'" placeholder="7" style="width:56px;padding:5px 6px;border:1px solid var(--line);border-radius:5px;font-size:12px;font-family:var(--mono);">' +
+        '<button class="btn btn-ghost btn-sm" onclick="salvarToleranciaAtividade('+idx+')">Salvar</button>' +
+        '<button class="btn btn-danger btn-sm" onclick="deleteAtividade('+idx+')">Excluir</button>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+}
+
+async function salvarToleranciaAtividade(idx){
+  if(!session.isMaster) return;
+  const a = atividadesCache[idx];
+  if(!a) return;
+  const tolEVal = document.getElementById('tolEntrada_'+idx).value.trim();
+  const tolSVal = document.getElementById('tolSaida_'+idx).value.trim();
+  a.toleranciaEntradaMin = tolEVal === '' ? null : Math.max(0, parseInt(tolEVal, 10) || 0);
+  a.toleranciaSaidaMin = tolSVal === '' ? null : Math.max(0, parseInt(tolSVal, 10) || 0);
+  await saveAtividades();
+  showToast('Tolerância de "'+a.nome+'" atualizada.');
+  if(document.getElementById('view-dashboard').classList.contains('active')) renderDashboard();
 }
 
 async function createAtividade(ev){
@@ -3398,12 +3446,18 @@ async function createAtividade(ev){
     showToast('Já existe uma atividade com esse nome.');
     return false;
   }
-  atividadesCache.push({ nome, setor });
+  atividadesCache.push({
+    nome, setor,
+    toleranciaEntradaMin: document.getElementById('newAtividadeTolEntrada').value.trim() === '' ? null : Math.max(0, parseInt(document.getElementById('newAtividadeTolEntrada').value, 10) || 0),
+    toleranciaSaidaMin: document.getElementById('newAtividadeTolSaida').value.trim() === '' ? null : Math.max(0, parseInt(document.getElementById('newAtividadeTolSaida').value, 10) || 0)
+  });
   await saveAtividades();
   renderAtividadeList();
   populateAtividadeFilter();
   populateNewUserAtividade();
   document.getElementById('newAtividadeName').value='';
+  document.getElementById('newAtividadeTolEntrada').value='';
+  document.getElementById('newAtividadeTolSaida').value='';
   showToast('Atividade criada com sucesso.');
   return false;
 }
