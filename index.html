@@ -3457,6 +3457,13 @@ function toggleFolgaTipoFields(){
   }
 }
 
+// Reprocessa as grades visuais do rodízio (Config e Dashboard, se existirem no DOM) — chamado
+// sempre que o calendário de folga muda (cadastro ou exclusão), para refletir feriados e exceções.
+function refreshGradesRodizio(){
+  if(document.getElementById('grade5x1Grid')) renderGradeRodizio('grade5x1Grid');
+  if(document.getElementById('grade5x1GridDash')) renderGradeRodizio('grade5x1GridDash');
+}
+
 function renderFolgaCalendarList(){
   const box = document.getElementById('folgaCalendarList');
   if(!box) return;
@@ -3507,6 +3514,7 @@ async function createFolgaCalendar(ev){
   await saveFolgas();
   renderFolgaCalendarList();
   populateFolgaEscalaDatalist();
+  refreshGradesRodizio();
   document.getElementById('newFolgaEscala').value = '';
   document.getElementById('newFolgaEscala').readOnly = false;
   document.getElementById('newFolgaObs').value = '';
@@ -3524,6 +3532,7 @@ async function deleteFolgaCalendar(id){
   await saveFolgas();
   renderFolgaCalendarList();
   populateFolgaEscalaDatalist();
+  refreshGradesRodizio();
   if(document.getElementById('view-dashboard').classList.contains('active')) renderDashboard();
 }
 
