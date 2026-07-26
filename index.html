@@ -336,8 +336,29 @@
         <div class="day-note" id="dayNote"></div>
       </div>
 
-      <div style="display:flex;justify-content:flex-end;margin-bottom:14px;">
+      <div style="display:flex;justify-content:flex-end;gap:10px;margin-bottom:14px;flex-wrap:wrap;">
+        <button class="btn btn-ghost btn-sm" onclick="abrirCalendarioFolgaDashboard()" id="btnVerCalendarioFolga">📅 Ver calendário de folga</button>
         <button class="btn btn-ghost btn-sm" onclick="exportDashboardPDF()" id="btnExportPdf">📄 Exportar dashboard em PDF</button>
+      </div>
+
+      <div class="panel" id="folgaDashboardPanel" style="display:none;">
+        <div class="panel-head">
+          <h2>Calendário de folga (somente visualização)</h2>
+          <div class="meta">consulte as folgas cadastradas — a edição fica em Configurações</div>
+        </div>
+        <div class="panel-body">
+          <div class="toolbar" style="padding:0;border:none;background:transparent;margin-bottom:16px;">
+            <div class="field">
+              <label>De</label>
+              <input type="date" id="folgaViewFrom" onchange="renderFolgaCalendarioDashboard()">
+            </div>
+            <div class="field">
+              <label>Até</label>
+              <input type="date" id="folgaViewTo" onchange="renderFolgaCalendarioDashboard()">
+            </div>
+          </div>
+          <div id="folgaDashboardList" style="overflow-x:auto;"></div>
+        </div>
       </div>
 
       <div class="kpi-grid" id="kpiGridPdf">
@@ -586,7 +607,61 @@
         </div>
       </div>
 
-      <!-- ===== ENVIO AUTOMÁTICO DO DASHBOARD POR E-MAIL (100% gratuito) ===== -->
+      <!-- ===== CALENDÁRIO DE FOLGA (manual, por escala) ===== -->
+      <div class="panel" style="margin-top:22px;">
+        <div class="panel-head">
+          <h2>Calendário de folga</h2>
+          <div class="meta">defina, por escala de jornada, quais dias são de folga</div>
+        </div>
+        <div class="panel-body">
+          <div class="note-box" style="margin-bottom:16px;">
+            As escalas <b>6x1</b> (folga sempre aos domingos) e <b>5x1</b> (rodízio de grupos A–F) já são
+            calculadas automaticamente e não precisam de cadastro aqui. Use este calendário para as demais
+            escalas — como <b>Comercial</b>, <b>5x2</b> ou <b>6x2</b> — ou para cadastrar um feriado que
+            afete todas as escalas de uma vez.
+          </div>
+          <form class="stacked" onsubmit="return createFolgaCalendar(event)" style="margin-bottom:18px;">
+            <div class="toolbar" style="padding:0;border:none;background:transparent;margin-bottom:0;align-items:flex-end;">
+              <div class="field">
+                <label>Escala</label>
+                <input type="text" id="newFolgaEscala" list="folgaEscalaOptions" required placeholder="ex: Comercial">
+                <datalist id="folgaEscalaOptions"></datalist>
+              </div>
+              <div class="field">
+                <label>Tipo</label>
+                <select id="newFolgaTipo" onchange="toggleFolgaTipoFields()">
+                  <option value="semanal">Dia da semana fixo (recorrente)</option>
+                  <option value="data">Data específica (ex: feriado)</option>
+                </select>
+              </div>
+              <div class="field" id="newFolgaDiaSemanaWrap">
+                <label>Dia da semana</label>
+                <select id="newFolgaDiaSemana">
+                  <option value="0">Domingo</option>
+                  <option value="1">Segunda</option>
+                  <option value="2">Terça</option>
+                  <option value="3">Quarta</option>
+                  <option value="4">Quinta</option>
+                  <option value="5">Sexta</option>
+                  <option value="6">Sábado</option>
+                </select>
+              </div>
+              <div class="field" id="newFolgaDataWrap" style="display:none;">
+                <label>Data</label>
+                <input type="date" id="newFolgaData">
+              </div>
+              <div class="field grow">
+                <label>Observação (opcional)</label>
+                <input type="text" id="newFolgaObs" placeholder="ex: Feriado nacional">
+              </div>
+              <button class="btn btn-primary btn-sm" type="submit">Cadastrar folga</button>
+            </div>
+          </form>
+          <div id="folgaCalendarList"></div>
+        </div>
+      </div>
+
+
       <div class="panel" style="margin-top:22px;padding:18px;">
         <div class="panel-head" style="padding:0 0 12px;">
           <h2>Envio automático do dashboard por e-mail</h2>
@@ -1031,6 +1106,9 @@ function allEmployees(){ return employeesDataTouched ? employeesExtra : BASE_EMP
 /* ======================= SETORES E ATIVIDADES (CONFIG) ======================= */
 let setoresCache = [];
 let atividadesCache = []; // [{nome, setor}]
+let folgasCache = []; // [{id, escala, tipo:'semanal'|'data', diaSemana, data, obs}] — calendário manual de folgas
+const DIAS_SEMANA = ['Domingo','Segunda','Terça','Quarta','Quinta','Sexta','Sábado'];
+const DIAS_SEMANA_ABREV = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
 
 async function loadSetores(){
   const raw = await storageGet('setores_v1', true);
@@ -1052,6 +1130,41 @@ async function loadAtividades(){
   return atividadesCache;
 }
 async function saveAtividades(){ await storageSet('atividades_v1', JSON.stringify(atividadesCache), true); }
+
+/* ======================= CALENDÁRIO DE FOLGA (manual, por escala) =======================
+   Cada colaborador tem um "escalaTipo" (ex.: 6x1, 5x1, Comercial, 5x2, 6x2). O 6x1 e o 5x1 já
+   têm a folga calculada automaticamente (domingo fixo / rodízio de grupos A-F). Para as demais
+   escalas — e para feriados que afetam todo mundo — o master cadastra aqui, manualmente, quais
+   datas (fixas por dia da semana, recorrentes, ou uma data específica) são de folga. */
+async function loadFolgas(){
+  const raw = await storageGet('folgas_calendario_v1', true);
+  folgasCache = raw ? JSON.parse(raw) : [];
+  return folgasCache;
+}
+async function saveFolgas(){ await storageSet('folgas_calendario_v1', JSON.stringify(folgasCache), true); }
+
+// Lista, dentre as escalas cadastradas nos colaboradores importados, quais valores existem hoje —
+// usada apenas para sugestão (datalist) no formulário de cadastro do calendário de folga.
+function escalasEmUso(){
+  const set = new Set();
+  allEmployees().forEach(e=>{ if(e.escalaTipo) set.add(e.escalaTipo.trim()); });
+  ['6x1','5x1','Comercial','5x2','6x2'].forEach(s=>set.add(s));
+  return Array.from(set).sort();
+}
+
+// Diz se, para a escala e data informadas, existe uma folga cadastrada manualmente no calendário.
+function folgaCalendarioParaEscalaData(escalaTipo, dateStr){
+  if(!escalaTipo) return null;
+  const escalaNorm = escalaTipo.trim().toLowerCase();
+  const wd = new Date(dateStr+'T00:00:00').getDay();
+  return folgasCache.find(f=>{
+    const alvo = (f.escala||'').trim().toLowerCase();
+    if(alvo !== 'todas as escalas' && alvo !== escalaNorm) return false;
+    if(f.tipo === 'semanal') return Number(f.diaSemana) === wd;
+    if(f.tipo === 'data') return f.data === dateStr;
+    return false;
+  }) || null;
+}
 
 function atividadeNomes(){ return atividadesCache.map(a => a.nome); }
 
@@ -1519,6 +1632,7 @@ async function enterApp(){
 
   await loadSetores();
   await loadAtividades();
+  await loadFolgas();
   await loadExtraEmployees();
   await loadUsersPerfil();
 
@@ -1538,6 +1652,8 @@ async function enterApp(){
     renderSetorList();
     renderAtividadeList();
     populateNewAtividadeSetorSelect();
+    renderFolgaCalendarList();
+    populateFolgaEscalaDatalist();
     await loadEmailScheduleConfig();
     fillEmailScheduleFormFromConfig();
     startEmailScheduler();
@@ -1744,6 +1860,11 @@ function computeStatus(emp, dateStr, hasDataForDate){
     const wd = new Date(dateStr+'T00:00:00').getDay();
     if(wd === 0) return { code:'folga', label:'Folga (DSR)' };
   }
+
+  // Escalas fora do 5x1/6x1 automático (ex.: Comercial, 5x2, 6x2) ou feriados que afetam
+  // "Todas as escalas" — checados a partir do calendário de folga cadastrado manualmente.
+  const folgaManual = folgaCalendarioParaEscalaData(emp.escalaTipo, dateStr);
+  if(folgaManual) return { code:'folga', label: folgaManual.obs ? ('Folga — '+folgaManual.obs) : 'Folga (DSR)' };
 
   if(!hasDataForDate) return { code:'sem-dados', label:'Sem dados de ponto' };
 
@@ -3122,6 +3243,142 @@ async function deleteAtividade(idx){
   renderAtividadeList();
   populateAtividadeFilter();
   populateNewUserAtividade();
+}
+
+/* ======================= CALENDÁRIO DE FOLGA (CONFIG: cadastrar/listar/excluir) ======================= */
+function populateFolgaEscalaDatalist(){
+  const dl = document.getElementById('folgaEscalaOptions');
+  if(!dl) return;
+  dl.innerHTML = escalasEmUso().concat(['Todas as escalas']).map(e=>'<option value="'+escapeHtml(e)+'">').join('');
+}
+
+function toggleFolgaTipoFields(){
+  const tipo = document.getElementById('newFolgaTipo').value;
+  document.getElementById('newFolgaDiaSemanaWrap').style.display = tipo === 'semanal' ? '' : 'none';
+  document.getElementById('newFolgaDataWrap').style.display = tipo === 'data' ? '' : 'none';
+}
+
+function renderFolgaCalendarList(){
+  const box = document.getElementById('folgaCalendarList');
+  if(!box) return;
+  if(folgasCache.length === 0){
+    box.innerHTML = '<div class="empty-state">Nenhuma folga cadastrada no calendário manual.</div>';
+    return;
+  }
+  const ordenadas = folgasCache.slice().sort((a,b)=>{
+    if(a.escala !== b.escala) return a.escala.localeCompare(b.escala);
+    if(a.tipo !== b.tipo) return a.tipo === 'semanal' ? -1 : 1;
+    return (a.data||'').localeCompare(b.data||'');
+  });
+  box.innerHTML = ordenadas.map(f=>{
+    const idx = folgasCache.indexOf(f);
+    const quando = f.tipo === 'semanal'
+      ? 'Toda ' + DIAS_SEMANA[Number(f.diaSemana)].toLowerCase() + ' (recorrente)'
+      : 'Dia ' + formatDateBR(f.data);
+    const obs = f.obs ? (' <span class="tag">'+escapeHtml(f.obs)+'</span>') : '';
+    return '<div class="user-row"><div><span class="u-name">'+escapeHtml(f.escala)+'</span><span class="tag">'+quando+'</span>'+obs+'</div>'+
+      '<button class="btn btn-danger btn-sm" onclick="deleteFolgaCalendar(\''+f.id+'\')">Excluir</button></div>';
+  }).join('');
+}
+
+async function createFolgaCalendar(ev){
+  ev.preventDefault();
+  if(!session.isMaster) return false;
+  const escala = document.getElementById('newFolgaEscala').value.trim();
+  const tipo = document.getElementById('newFolgaTipo').value;
+  const obs = document.getElementById('newFolgaObs').value.trim();
+  if(!escala){ showToast('Informe a escala.'); return false; }
+  const entry = { id: 'f'+Date.now()+Math.random().toString(36).slice(2,7), escala, tipo, obs };
+  if(tipo === 'semanal'){
+    entry.diaSemana = document.getElementById('newFolgaDiaSemana').value;
+  } else {
+    const data = document.getElementById('newFolgaData').value;
+    if(!data){ showToast('Informe a data.'); return false; }
+    entry.data = data;
+  }
+  folgasCache.push(entry);
+  await saveFolgas();
+  renderFolgaCalendarList();
+  populateFolgaEscalaDatalist();
+  document.getElementById('newFolgaEscala').value = '';
+  document.getElementById('newFolgaObs').value = '';
+  document.getElementById('newFolgaData').value = '';
+  showToast('Folga cadastrada no calendário.');
+  if(document.getElementById('view-dashboard').classList.contains('active')) renderDashboard();
+  return false;
+}
+
+async function deleteFolgaCalendar(id){
+  if(!session.isMaster) return;
+  const idx = folgasCache.findIndex(f=>f.id===id);
+  if(idx === -1) return;
+  folgasCache.splice(idx,1);
+  await saveFolgas();
+  renderFolgaCalendarList();
+  populateFolgaEscalaDatalist();
+  if(document.getElementById('view-dashboard').classList.contains('active')) renderDashboard();
+}
+
+/* ======================= CALENDÁRIO DE FOLGA (DASHBOARD: somente visualização) ======================= */
+// Formata "2026-07-26" como "26/07/2026".
+function formatDateBR(dateStr){
+  if(!dateStr) return '—';
+  const [y,m,d] = dateStr.split('-');
+  return d+'/'+m+'/'+y;
+}
+
+// Expande as regras cadastradas (semanais e datas específicas) em ocorrências concretas dentro do
+// intervalo [dateFrom, dateTo], para exibição em formato de calendário/lista no Dashboard.
+function calcularOcorrenciasFolga(dateFrom, dateTo){
+  const ocorrencias = [];
+  if(!dateFrom || !dateTo || folgasCache.length === 0) return ocorrencias;
+  let cursor = new Date(dateFrom+'T00:00:00');
+  const fim = new Date(dateTo+'T00:00:00');
+  let guard = 0;
+  while(cursor <= fim && guard < 730){
+    guard++;
+    const dateStr = cursor.toISOString().slice(0,10);
+    const wd = cursor.getDay();
+    folgasCache.forEach(f=>{
+      const bate = f.tipo === 'semanal' ? Number(f.diaSemana) === wd : f.data === dateStr;
+      if(bate) ocorrencias.push({ data: dateStr, escala: f.escala, obs: f.obs, tipo: f.tipo });
+    });
+    cursor.setDate(cursor.getDate()+1);
+  }
+  ocorrencias.sort((a,b)=> a.data === b.data ? a.escala.localeCompare(b.escala) : a.data.localeCompare(b.data));
+  return ocorrencias;
+}
+
+function abrirCalendarioFolgaDashboard(){
+  const box = document.getElementById('folgaDashboardPanel');
+  if(!box) return;
+  const aberto = box.style.display !== 'none';
+  if(aberto){ box.style.display = 'none'; return; }
+  box.style.display = 'block';
+  const hoje = todayStr();
+  if(!document.getElementById('folgaViewFrom').value) document.getElementById('folgaViewFrom').value = hoje;
+  if(!document.getElementById('folgaViewTo').value){
+    const d = new Date(); d.setDate(d.getDate()+30);
+    document.getElementById('folgaViewTo').value = d.toISOString().slice(0,10);
+  }
+  renderFolgaCalendarioDashboard();
+}
+
+function renderFolgaCalendarioDashboard(){
+  const from = document.getElementById('folgaViewFrom').value;
+  const to = document.getElementById('folgaViewTo').value;
+  const listEl = document.getElementById('folgaDashboardList');
+  if(!from || !to){ listEl.innerHTML = '<div class="empty-state">Selecione o período para visualizar.</div>'; return; }
+  const ocorrencias = calcularOcorrenciasFolga(from, to);
+  if(ocorrencias.length === 0){
+    listEl.innerHTML = '<div class="empty-state">Nenhuma folga cadastrada no período selecionado.</div>';
+    return;
+  }
+  listEl.innerHTML = '<table><thead><tr><th>Data</th><th>Dia da semana</th><th>Escala</th><th>Observação</th></tr></thead><tbody>' +
+    ocorrencias.map(o=>{
+      const wd = new Date(o.data+'T00:00:00').getDay();
+      return '<tr><td class="mono">'+formatDateBR(o.data)+'</td><td>'+DIAS_SEMANA[wd]+'</td><td>'+escapeHtml(o.escala)+'</td><td>'+(o.obs?escapeHtml(o.obs):'—')+'</td></tr>';
+    }).join('') + '</tbody></table>';
 }
 
 /* ======================= ENTER PARA LOGIN ======================= */
