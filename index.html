@@ -189,7 +189,9 @@
   .grade5x1-tabela th{ font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--ink-soft); padding:6px 4px; text-align:center; }
   .grade5x1-tabela td{ border:1px solid var(--line); vertical-align:top; height:64px; padding:4px 6px; }
   .grade5x1-tabela td.vazio{ background:#FAF9F5; border-color:var(--line); }
+  .grade5x1-tabela td.feriado{ background:var(--red-soft); }
   .grade5x1-dia{ font-size:11px; color:var(--ink-soft); }
+  .grade5x1-feriado-nome{ font-size:8.5px; color:var(--red); line-height:1.15; margin-top:2px; overflow:hidden; text-overflow:ellipsis; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; }
   .grade5x1-letra{
     display:inline-flex; align-items:center; justify-content:center; width:24px; height:24px; border-radius:50%;
     font-size:12px; font-weight:700; margin-top:6px; color:#fff;
@@ -212,6 +214,22 @@
   .grade-export-header-txt{ display:flex; flex-direction:column; }
   .grade-export-header-txt b{ font-family:var(--serif); font-size:16px; color:var(--ink); }
   .grade-export-header-txt span{ font-size:11.5px; color:var(--ink-soft); }
+
+  /* ---- Modo compacto: vários meses lado a lado, dimensionado para caber numa página A4 ---- */
+  .grade-a4-page{ width:1050px; margin:0 auto; padding:0 16px 16px; box-sizing:border-box; }
+  .grade-multi-grid{ display:grid; gap:10px; }
+  .grade5x1.compacto{ padding:0; }
+  .grade5x1.compacto .grade5x1-titulo{ font-size:12px; margin-bottom:6px; }
+  .grade5x1.compacto .grade5x1-tabela th{ font-size:8px; padding:2px 1px; }
+  .grade5x1.compacto .grade5x1-tabela td{ height:30px; padding:2px 3px; }
+  .grade5x1.compacto .grade5x1-dia{ font-size:8.5px; }
+  .grade5x1.compacto .grade5x1-feriado-nome{ font-size:6px; -webkit-line-clamp:1; }
+  .grade5x1.compacto .grade5x1-letra{ width:14px; height:14px; font-size:7.5px; margin-top:2px; }
+  .grade5x1.compacto .grade5x1-letras{ gap:2px; }
+  .grade-feriados-lista{ margin-top:16px; font-size:11px; color:var(--ink-soft); }
+  .grade-feriados-lista b{ color:var(--ink); }
+  .grade-feriados-lista ul{ list-style:none; margin:6px 0 0; padding:0; columns:2; }
+  .grade-feriados-lista li{ padding:2px 0; break-inside:avoid; }
 
   .empty-state{ padding:40px 20px; text-align:center; color:var(--ink-soft); font-size:13px; }
 
@@ -764,7 +782,7 @@
             </div>
             <button class="btn btn-ghost btn-sm" type="button" onclick="exportarGradeComoImagem('grade5x1Wrap','calendario-rodizio')">🖼️ Exportar como imagem</button>
           </div>
-          <p style="font-size:11.5px;color:var(--ink-soft);margin:-8px 0 14px;">Selecione quantos meses precisar — de um único mês até um período mais longo.</p>
+          <p style="font-size:11.5px;color:var(--ink-soft);margin:-8px 0 14px;">Selecione quantos meses precisar — com mais de um mês, a grade encolhe e organiza em colunas para caber numa única página A4. Feriados cadastrados como "Todas as escalas" (tipo Data específica) aparecem destacados em vermelho, com o nome.</p>
           <div id="grade5x1Wrap" style="background:var(--panel);">
             <div id="grade5x1Grid"></div>
           </div>
@@ -3544,7 +3562,22 @@ function gruposExcecaoNaData(escalaKey, dateStr){
   return grupos;
 }
 
-function renderMesRodizioHTML(escalaKey, ano, mes){
+// Um feriado é qualquer folga cadastrada como "Data específica" com a escala "Todas as escalas"
+// (cadastro em Configurações → Calendário de folga) — vale independente do rodízio (5x1 ou 6x2).
+function feriadoNaData(dateStr){
+  const f = folgasCache.find(x => x.tipo === 'data' && (x.escala||'').trim().toLowerCase() === 'todas as escalas' && x.data === dateStr);
+  return f ? (f.obs && f.obs.trim() ? f.obs.trim() : 'Feriado') : null;
+}
+
+// Lista os feriados cadastrados dentro de um intervalo de datas (para a legenda abaixo da grade).
+function feriadosNoIntervalo(dateFromStr, dateToStr){
+  return folgasCache
+    .filter(f => f.tipo === 'data' && (f.escala||'').trim().toLowerCase() === 'todas as escalas' && f.data >= dateFromStr && f.data <= dateToStr)
+    .map(f => ({ data: f.data, nome: f.obs && f.obs.trim() ? f.obs.trim() : 'Feriado' }))
+    .sort((a,b)=> a.data.localeCompare(b.data));
+}
+
+function renderMesRodizioHTML(escalaKey, ano, mes, compacto){
   const cfg = ESCALAS_RODIZIO[escalaKey];
   const primeiroDia = new Date(ano, mes-1, 1);
   const totalDias = new Date(ano, mes, 0).getDate();
@@ -3563,7 +3596,11 @@ function renderMesRodizioHTML(escalaKey, ano, mes){
       const cls = gruposExcecao.has(l) && !gruposAutomaticos.has(l) ? 'grade5x1-letra g'+l+' exc' : 'grade5x1-letra g'+l;
       return '<span class="'+cls+'" title="'+(gruposExcecao.has(l) ? 'Exceção cadastrada' : 'Folga do rodízio')+'">'+l+'</span>';
     }).join(' ');
-    celulas += '<td><div class="grade5x1-dia">'+dia+'</div><div class="grade5x1-letras">'+badges+'</div></td>';
+    const nomeFeriado = feriadoNaData(dateStr);
+    const tdClass = nomeFeriado ? ' class="feriado"' : '';
+    const tdTitle = nomeFeriado ? ' title="Feriado: '+escapeHtml(nomeFeriado)+'"' : '';
+    const feriadoHtml = nomeFeriado ? '<div class="grade5x1-feriado-nome">'+escapeHtml(nomeFeriado)+'</div>' : '';
+    celulas += '<td'+tdClass+tdTitle+'><div class="grade5x1-dia">'+dia+'</div>'+feriadoHtml+'<div class="grade5x1-letras">'+badges+'</div></td>';
   }
   const totalCelulas = offsetSemana + totalDias;
   const sobra = (7 - (totalCelulas % 7)) % 7;
@@ -3573,13 +3610,15 @@ function renderMesRodizioHTML(escalaKey, ano, mes){
   let corpo = '';
   for(let i=0;i<tds.length;i+=7) corpo += '<tr>'+tds.slice(i,i+7).join('')+'</tr>';
 
-  return '<div class="grade5x1">' +
+  return '<div class="grade5x1'+(compacto?' compacto':'')+'">' +
     '<div class="grade5x1-titulo">'+nomeMes+'</div>' +
     '<table class="grade5x1-tabela"><thead>'+cabecalho+'</thead><tbody>'+corpo+'</tbody></table>' +
     '</div>';
 }
 
 // Renderiza a grade — de um único mês até vários meses seguidos, conforme o período escolhido.
+// Com mais de um mês, encolhe tudo e organiza em colunas lado a lado, para caber numa única
+// página A4 na exportação (em vez de empilhar um calendário embaixo do outro).
 function renderGradeRodizio(gridId){
   const grid = document.getElementById(gridId);
   const { escalaSel, mesDe, mesAte } = controlesParaGrade(gridId);
@@ -3602,25 +3641,48 @@ function renderGradeRodizio(gridId){
     idxFim = idxIni + LIMITE_MESES_GRADE - 1;
     avisoLimite = true;
   }
+  const totalMeses = idxFim - idxIni + 1;
+  const compacto = totalMeses > 1;
 
   const logo = getLogoDataUrl();
-  let html = '<div class="grade-export-header">' +
+  let html = '<div class="grade-a4-page"><div class="grade-export-header">' +
     (logo ? '<img src="'+logo+'" alt="Dois Marcos Sementes">' : '') +
     '<div class="grade-export-header-txt"><b>Dois Marcos Sementes</b><span>Calendário de rodízio — '+cfg.label+'</span></div>' +
     '</div>';
 
-  for(let idx=idxIni; idx<=idxFim; idx++){
-    const ano = Math.floor(idx/12);
-    const mes = (idx % 12) + 1;
-    html += renderMesRodizioHTML(escalaKey, ano, mes);
+  if(!compacto){
+    const ano = Math.floor(idxIni/12);
+    const mes = (idxIni % 12) + 1;
+    html += renderMesRodizioHTML(escalaKey, ano, mes, false);
+  } else {
+    const colunas = totalMeses <= 3 ? totalMeses : (totalMeses <= 8 ? 3 : 4);
+    html += '<div class="grade-multi-grid" style="grid-template-columns:repeat('+colunas+',1fr);">';
+    for(let idx=idxIni; idx<=idxFim; idx++){
+      const ano = Math.floor(idx/12);
+      const mes = (idx % 12) + 1;
+      html += renderMesRodizioHTML(escalaKey, ano, mes, true);
+    }
+    html += '</div>';
   }
 
-  const legenda = cfg.letras.map(l=>'<span><span class="dot grade5x1-letra g'+l+'" style="width:16px;height:16px;font-size:9px;">'+l+'</span> Grupo '+l+'</span>').join('');
+  const legenda = cfg.letras.map(l=>'<span><span class="dot grade5x1-letra g'+l+'" style="width:16px;height:16px;font-size:9px;">'+l+'</span> Grupo '+l+'</span>').join('') +
+    '<span><span class="dot" style="background:var(--red-soft);border:1px solid var(--red);"></span> Feriado</span>';
   html += '<div class="grade5x1-legenda">'+legenda+'</div>';
+
+  const primeiroDiaIni = new Date(Math.floor(idxIni/12), (idxIni%12), 1);
+  const ultimoDiaFim = new Date(Math.floor(idxFim/12), (idxFim%12)+1, 0);
+  const feriados = feriadosNoIntervalo(primeiroDiaIni.toISOString().slice(0,10), ultimoDiaFim.toISOString().slice(0,10));
+  if(feriados.length){
+    html += '<div class="grade-feriados-lista"><b>Feriados no período:</b><ul>' +
+      feriados.map(f=>'<li>'+formatDateBR(f.data)+' — '+escapeHtml(f.nome)+'</li>').join('') +
+      '</ul></div>';
+  }
+  html += '</div>';
 
   grid.innerHTML = html;
   if(avisoLimite) showToast('Mostrando os primeiros '+LIMITE_MESES_GRADE+' meses do período selecionado.');
 }
+
 
 // Exporta o conteúdo de um contêiner (ex.: a grade do calendário de rodízio) como arquivo PNG,
 // usando o html2canvas que já é carregado pelo app para o export do dashboard em PDF.
