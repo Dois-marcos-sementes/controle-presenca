@@ -283,6 +283,7 @@
     </div>
     <div class="topbar-right">
       <div class="who"><b id="whoName">—</b><span id="whoScope">—</span></div>
+      <button class="icon-btn" id="btnGerarLink" style="display:none;" onclick="gerarLinkApp()">🔗 Link do app</button>
       <button class="icon-btn" onclick="abrirModalAlterarSenha()">Alterar senha</button>
       <button class="icon-btn" onclick="logout()">Sair</button>
     </div>
@@ -796,6 +797,38 @@ async function storageSet(key, value, shared){
   try{ localStorage.setItem('cp_'+key, value); }
   catch(e){ console.error('storage set (localStorage) falhou', e); }
   return okRemote;
+}
+
+/* Gera o link direto do app (URL atual, sem parâmetros/âncora) e copia para a área
+   de transferência, para o master poder compartilhar/abrir no navegador facilmente. */
+function gerarLinkApp(){
+  const link = window.location.origin + window.location.pathname;
+
+  function fallbackCopy(){
+    const temp = document.createElement('textarea');
+    temp.value = link;
+    temp.style.position = 'fixed';
+    temp.style.opacity = '0';
+    document.body.appendChild(temp);
+    temp.focus();
+    temp.select();
+    let ok = false;
+    try{ ok = document.execCommand('copy'); }catch(e){ ok = false; }
+    document.body.removeChild(temp);
+    return ok;
+  }
+
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(link).then(function(){
+      showToast('Link do app copiado: ' + link);
+    }).catch(function(){
+      if(fallbackCopy()) showToast('Link do app copiado: ' + link);
+      else prompt('Copie o link do app abaixo:', link);
+    });
+  }else{
+    if(fallbackCopy()) showToast('Link do app copiado: ' + link);
+    else prompt('Copie o link do app abaixo:', link);
+  }
 }
 
 function showToast(msg){
@@ -1480,6 +1513,7 @@ async function enterApp(){
     : ((session.perfil === 'lider' ? 'Líder · ' : 'Padrão · ') + 'Atividade(s): ' + (session.atividades.join(', ') || '—'));
   document.getElementById('whoScope').textContent = perfilLabel;
   document.getElementById('tabConfigBtn').style.display = session.isMaster ? 'inline-block' : 'none';
+  document.getElementById('btnGerarLink').style.display = session.isMaster ? 'inline-flex' : 'none';
   document.getElementById('tabPessoalBtn').style.display = podeGerenciarPessoal() ? 'inline-block' : 'none';
   avisarPrimeiroAcessoSeNecessario();
 
