@@ -685,18 +685,20 @@
             </div>
             <div style="display:flex;gap:10px;margin-bottom:10px;">
               <div class="field" style="margin:0;flex:1;">
-                <label>Tolerância entrada (min)</label>
-                <input type="number" id="newAtividadeTolEntrada" min="0" placeholder="padrão: 7">
+                <label>Caminhada até a catraca — entrada (min)</label>
+                <input type="number" id="newAtividadeTolEntrada" min="0" placeholder="padrão: 0">
               </div>
               <div class="field" style="margin:0;flex:1;">
-                <label>Tolerância saída (min)</label>
-                <input type="number" id="newAtividadeTolSaida" min="0" placeholder="padrão: 7">
+                <label>Caminhada até a catraca — saída (min)</label>
+                <input type="number" id="newAtividadeTolSaida" min="0" placeholder="padrão: 0">
               </div>
             </div>
             <p style="font-size:11px;color:var(--ink-soft);margin:0 0 10px;">
-              Deixe em branco para usar o padrão (7 min). Use a tolerância de saída maior em atividades
-              distantes da catraca — ex.: se o colaborador costuma bater o ponto 20 a 40 min antes do fim
-              do turno por causa da caminhada até o relógio, ajuste aqui para não marcar como saída antecipada.
+              A catraca (portaria) fica longe do relógio ponto do setor: na entrada, o colaborador passa
+              na catraca <b>antes</b> do horário da estrutura; na saída, passa <b>depois</b> — porque leva
+              esse tempo pra caminhar até lá. Informe aqui esses minutos de caminhada (ex.: 20 a 40) para
+              o sistema comparar o horário certo e não confundir isso com atraso ou saída antecipada.
+              Deixe em branco se a catraca fica no mesmo local do relógio ponto (padrão: 0 min).
             </p>
             <button class="btn btn-primary btn-sm" type="submit">Adicionar atividade</button>
           </form>
@@ -1997,15 +1999,17 @@ function nextDateStr(dateStr){
   return d.toISOString().slice(0,10);
 }
 
-const GLOBAL_TOLERANCE_MIN = 7; // desconsidera atrasos/saídas antecipadas dentro dessa margem (entrada, saída e refeição)
+const GLOBAL_TOLERANCE_MIN = 7; // margem de variação natural na catraca, além do tempo de caminhada já esperado
 
-// Tolerância de entrada/saída pode ser ajustada por atividade (Configurações → Atividades) — útil
-// para atividades distantes da catraca, onde o colaborador bate o ponto de saída bem antes do fim
-// do turno por causa do tempo de caminhada. Sem valor configurado, usa a margem padrão (7 min).
-function toleranciaParaAtividade(atividadeNome, tipo){
+// A catraca (portaria) fica longe do relógio ponto do setor onde a atividade é realizada: na
+// entrada, o colaborador passa na catraca ANTES do horário da estrutura (tempo de caminhada até o
+// setor); na saída, ele passa na catraca DEPOIS do horário da estrutura (tempo de caminhada de
+// volta até a catraca). Esse tempo de caminhada é configurável por atividade (Configurações →
+// Atividades) — sem valor configurado, assume 0 min (catraca e setor no mesmo lugar).
+function caminhadaParaAtividade(atividadeNome, tipo){
   const a = atividadesCache.find(x => x.nome === atividadeNome);
-  const valor = a ? (tipo === 'entrada' ? a.toleranciaEntradaMin : a.toleranciaSaidaMin) : null;
-  return (valor !== undefined && valor !== null && valor !== '') ? Number(valor) : GLOBAL_TOLERANCE_MIN;
+  const valor = a ? (tipo === 'entrada' ? a.caminhadaEntradaMin : a.caminhadaSaidaMin) : null;
+  return (valor !== undefined && valor !== null && valor !== '') ? Number(valor) : 0;
 }
 
 // Minutos desde a meia-noite no horário atual do dispositivo (usado só para detectar,
@@ -2120,10 +2124,12 @@ function computeStatus(emp, dateStr, hasDataForDate){
       const crossesMid = toMinutes(jornada.end) <= toMinutes(jornada.start);
       if(turnoAindaEmAndamento(startMin, endMin, nowMin, crossesMid)){
         const decorrido = minutosDesdeInicioTurno(startMin, nowMin);
-        if(decorrido > toleranciaParaAtividade(emp.atividade, 'entrada')){
+        const caminhadaEntrada = caminhadaParaAtividade(emp.atividade, 'entrada');
+        const atrasoEstimado = decorrido + caminhadaEntrada; // já considera o tempo esperado até passar na catraca
+        if(atrasoEstimado > GLOBAL_TOLERANCE_MIN){
           return {
-            code:'atraso', semEntrada:true, atrasoMin: decorrido,
-            label: 'Atrasado · ainda não bateu entrada (' + decorrido + ' min desde o início previsto ' + jornada.start + ')'
+            code:'atraso', semEntrada:true, atrasoMin: atrasoEstimado,
+            label: 'Atrasado · ainda não bateu entrada (' + atrasoEstimado + ' min desde o início previsto ' + jornada.start + ')'
           };
         }
       }
@@ -2136,13 +2142,23 @@ function computeStatus(emp, dateStr, hasDataForDate){
 
   if(entrada && jornada){
     entradaHora = entrada.dataEvento.slice(11,16);
-    const diff = toMinutes(entradaHora) - toMinutes(jornada.start);
-    if(diff > toleranciaParaAtividade(emp.atividade, 'entrada')) atrasoMin = diff;
+    // A catraca fica longe do relógio ponto do setor: na entrada, o colaborador passa na catraca
+    // ANTES do horário da estrutura (tempo de caminhada até o setor). O horário "esperado" na
+    // catraca é o início do turno menos essa caminhada — só é atraso de fato o que passar disso.
+    const caminhadaEntrada = caminhadaParaAtividade(emp.atividade, 'entrada');
+    const horarioEsperadoCatraca = toMinutes(jornada.start) - caminhadaEntrada;
+    const diff = toMinutes(entradaHora) - horarioEsperadoCatraca;
+    if(diff > GLOBAL_TOLERANCE_MIN) atrasoMin = diff;
   }
   if(saida && jornada){
     saidaHora = saida.dataEvento.slice(11,16);
-    const diff = toMinutes(jornada.end) - toMinutes(saidaHora);
-    if(diff > toleranciaParaAtividade(emp.atividade, 'saida')) saidaAntecipMin = diff;
+    // Na saída, o colaborador passa na catraca DEPOIS do horário da estrutura (tempo de caminhada
+    // de volta até a catraca). O horário "esperado" na catraca é o fim do turno mais essa
+    // caminhada — só é saída antecipada de fato o que faltar disso.
+    const caminhadaSaida = caminhadaParaAtividade(emp.atividade, 'saida');
+    const horarioEsperadoCatracaSaida = toMinutes(jornada.end) + caminhadaSaida;
+    const diff = horarioEsperadoCatracaSaida - toMinutes(saidaHora);
+    if(diff > GLOBAL_TOLERANCE_MIN) saidaAntecipMin = diff;
   }
 
   if(atrasoMin > 0){
@@ -3403,32 +3419,32 @@ function renderAtividadeList(){
     return;
   }
   box.innerHTML = atividadesCache.map((a,idx)=>{
-    const tolE = (a.toleranciaEntradaMin !== undefined && a.toleranciaEntradaMin !== null && a.toleranciaEntradaMin !== '') ? a.toleranciaEntradaMin : '';
-    const tolS = (a.toleranciaSaidaMin !== undefined && a.toleranciaSaidaMin !== null && a.toleranciaSaidaMin !== '') ? a.toleranciaSaidaMin : '';
+    const camE = (a.caminhadaEntradaMin !== undefined && a.caminhadaEntradaMin !== null && a.caminhadaEntradaMin !== '') ? a.caminhadaEntradaMin : '';
+    const camS = (a.caminhadaSaidaMin !== undefined && a.caminhadaSaidaMin !== null && a.caminhadaSaidaMin !== '') ? a.caminhadaSaidaMin : '';
     return '<div class="user-row" style="flex-wrap:wrap;gap:8px;">' +
       '<div><span class="u-name">'+escapeHtml(a.nome)+'</span><span class="tag">'+escapeHtml(a.setor||'—')+'</span></div>' +
       '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">' +
-        '<label style="font-size:10.5px;color:var(--ink-soft);">Tol. entrada</label>' +
-        '<input type="number" min="0" id="tolEntrada_'+idx+'" value="'+tolE+'" placeholder="7" style="width:56px;padding:5px 6px;border:1px solid var(--line);border-radius:5px;font-size:12px;font-family:var(--mono);">' +
-        '<label style="font-size:10.5px;color:var(--ink-soft);">Tol. saída</label>' +
-        '<input type="number" min="0" id="tolSaida_'+idx+'" value="'+tolS+'" placeholder="7" style="width:56px;padding:5px 6px;border:1px solid var(--line);border-radius:5px;font-size:12px;font-family:var(--mono);">' +
-        '<button class="btn btn-ghost btn-sm" onclick="salvarToleranciaAtividade('+idx+')">Salvar</button>' +
+        '<label style="font-size:10.5px;color:var(--ink-soft);">Caminhada entrada</label>' +
+        '<input type="number" min="0" id="camEntrada_'+idx+'" value="'+camE+'" placeholder="0" style="width:56px;padding:5px 6px;border:1px solid var(--line);border-radius:5px;font-size:12px;font-family:var(--mono);">' +
+        '<label style="font-size:10.5px;color:var(--ink-soft);">Caminhada saída</label>' +
+        '<input type="number" min="0" id="camSaida_'+idx+'" value="'+camS+'" placeholder="0" style="width:56px;padding:5px 6px;border:1px solid var(--line);border-radius:5px;font-size:12px;font-family:var(--mono);">' +
+        '<button class="btn btn-ghost btn-sm" onclick="salvarCaminhadaAtividade('+idx+')">Salvar</button>' +
         '<button class="btn btn-danger btn-sm" onclick="deleteAtividade('+idx+')">Excluir</button>' +
       '</div>' +
     '</div>';
   }).join('');
 }
 
-async function salvarToleranciaAtividade(idx){
+async function salvarCaminhadaAtividade(idx){
   if(!session.isMaster) return;
   const a = atividadesCache[idx];
   if(!a) return;
-  const tolEVal = document.getElementById('tolEntrada_'+idx).value.trim();
-  const tolSVal = document.getElementById('tolSaida_'+idx).value.trim();
-  a.toleranciaEntradaMin = tolEVal === '' ? null : Math.max(0, parseInt(tolEVal, 10) || 0);
-  a.toleranciaSaidaMin = tolSVal === '' ? null : Math.max(0, parseInt(tolSVal, 10) || 0);
+  const camEVal = document.getElementById('camEntrada_'+idx).value.trim();
+  const camSVal = document.getElementById('camSaida_'+idx).value.trim();
+  a.caminhadaEntradaMin = camEVal === '' ? null : Math.max(0, parseInt(camEVal, 10) || 0);
+  a.caminhadaSaidaMin = camSVal === '' ? null : Math.max(0, parseInt(camSVal, 10) || 0);
   await saveAtividades();
-  showToast('Tolerância de "'+a.nome+'" atualizada.');
+  showToast('Tempo de caminhada de "'+a.nome+'" atualizado.');
   if(document.getElementById('view-dashboard').classList.contains('active')) renderDashboard();
 }
 
@@ -3448,8 +3464,8 @@ async function createAtividade(ev){
   }
   atividadesCache.push({
     nome, setor,
-    toleranciaEntradaMin: document.getElementById('newAtividadeTolEntrada').value.trim() === '' ? null : Math.max(0, parseInt(document.getElementById('newAtividadeTolEntrada').value, 10) || 0),
-    toleranciaSaidaMin: document.getElementById('newAtividadeTolSaida').value.trim() === '' ? null : Math.max(0, parseInt(document.getElementById('newAtividadeTolSaida').value, 10) || 0)
+    caminhadaEntradaMin: document.getElementById('newAtividadeTolEntrada').value.trim() === '' ? null : Math.max(0, parseInt(document.getElementById('newAtividadeTolEntrada').value, 10) || 0),
+    caminhadaSaidaMin: document.getElementById('newAtividadeTolSaida').value.trim() === '' ? null : Math.max(0, parseInt(document.getElementById('newAtividadeTolSaida').value, 10) || 0)
   });
   await saveAtividades();
   renderAtividadeList();
